@@ -85,17 +85,12 @@ def create_app(
         }
 
     # ------------------------------------------------------------------
-    # Debug UI (reuse v1 if available)
+    # Index
     # ------------------------------------------------------------------
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        try:
-            from intent_router_harness.debug_ui import validator_html
-
-            return validator_html()
-        except ImportError:
-            return "<h1>intent_router_harness v2</h1>"
+        return "<h1>intent_router_harness v2</h1><p>POST /api/v1/message</p>"
 
     # ------------------------------------------------------------------
     # /api/v1/message — same wire format

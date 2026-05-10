@@ -1,5 +1,0 @@
-{
-  "name": "forward-workflow-node-output",
-  "events": ["after_workflow_tool_call"],
-  "command": ["python", "forward_node_output.py"]
-}

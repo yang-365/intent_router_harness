@@ -1,63 +1,49 @@
 # intent_router_harness
 
-A standalone assistant-protocol router for intent recognition, serial business
-task queues, skill-constrained slot filling, and task completion callbacks.
-
-The project owns its own specs, skills, regression data, tests, and local
-service — it does not import or patch any production router.
+A thin enterprise shell over the deepagent SDK — multi-user session isolation,
+progressive skill lifecycle, and protocol-compatible assistant API.
 
 ## Key Features
 
-- **Dual runtime**: Classic two-phase LLM pipeline or DeepAgent (LangGraph)
-  harness runtime, selectable per spec.
-- **Assistant Protocol**: Structured frame-based protocol with SSE streaming
-  support, trace events, and task-level state management.
+- **Zero-invasion deepagent wrapper**: `create_deep_agent()` used as-is; all
+  enterprise logic lives in 6 middleware classes.
+- **Progressive skill lifecycle**: Metadata-only scan at startup, body loaded
+  on-demand per intent, unloaded after task completion.
+- **Multi-user session isolation**: Concurrency locks per session, idle timeout,
+  user-binding enforcement.
+- **Assistant Protocol**: Structured frame-based protocol with SSE streaming,
+  trace events, and task-level state management.
 - **Workflow tool integration**: HTTP workflow API calls with URL whitelist
-  validation, SSE parsing, before/after lifecycle hooks, and comprehensive
-  error classification.
-- **Multi-task planning**: Serial task queue with `task_list` / `current_task`
-  tracking, slot memory isolation per task.
-- **Regression suite**: JSON-driven test fixtures for assistant protocol
-  validation with transcript-level assertion.
+  validation, SSE parsing, and error classification.
 
 ## Project Layout
 
 ```
 intent_router_harness/
-├── src/intent_router_harness/    # Core package
-│   ├── deepagent/                # DeepAgent runtime subpackage
+├── src/intent_router_harness/
+│   ├── harness_v2/               # Core runtime
+│   │   ├── agent.py              #   build_agent() via create_deep_agent
+│   │   ├── api.py                #   FastAPI app factory
+│   │   ├── config.py             #   TOML spec loading
 │   │   ├── errors.py             #   Error hierarchy
-│   │   ├── helpers.py            #   Shared helpers & protocol builders
-│   │   ├── middleware.py          #   LangGraph middleware controls
-│   │   ├── runner.py             #   NativeDeepAgentRunner
-│   │   └── service.py            #   DeepAgentAssistantProtocolService
-│   ├── serving/                  # HTTP serving layer
-│   │   ├── asgi.py               #   FastAPI ASGI application
-│   │   ├── server.py             #   Stdlib HTTP server
-│   │   └── debug_ui.py           #   Browser validation UI
-│   ├── contracts.py              # Pydantic request/response models
-│   ├── runtime.py                # PromptHarness & spec loading
-│   ├── service.py                # IntentRouterHarnessService
-│   ├── session_store.py          # In-memory session management
-│   ├── skills.py                 # Skill document loading
-│   ├── workflow.py               # Workflow SSE parsing & HTTP client
-│   └── _version.py               # Single source of truth for version
+│   │   ├── middleware.py          #   6 enterprise middleware classes
+│   │   ├── protocol.py           #   AssistantProtocolFrame, requests
+│   │   ├── session.py            #   SessionManager (isolation + locks)
+│   │   ├── skill_registry.py     #   Filesystem-based skill index
+│   │   └── workflow.py           #   workflow_api_call tool + SSE
+│   ├── __init__.py               # Re-exports from harness_v2
+│   └── __main__.py               # CLI entry point
 ├── tests/
 │   ├── unit/                     # Unit tests (no network)
 │   └── integration/              # Integration tests (ASGI, E2E)
 ├── docs/
-│   ├── architecture/             # High-level design & protocol docs
-│   ├── development/              # Developer setup, deployment, E2E testing
-│   └── product/                  # Product requirements & regression specs
-├── examples/                     # Sample specs, mock servers, clients
+│   ├── architecture/             # Design docs
+│   └── development/              # Deployment guide
+├── examples/                     # Sample specs, mock servers
 ├── skills/                       # Sample business skills & references
-├── regressions/                  # Structured regression suites
-├── hooks/                        # Workflow lifecycle hooks
-├── tools/                        # Command-backed runtime tools
-├── k8s/                          # Kubernetes manifests
-├── Makefile                      # Standard development targets
-├── pyproject.toml                # Build config, dependencies, ruff/pytest
-└── .env.example                  # Environment variable template
+├── Makefile
+├── pyproject.toml
+└── .env.example
 ```
 
 ## Quick Start
@@ -68,13 +54,9 @@ pip install -e '.[test]'
 
 # Run full test suite
 make test
-# or: python -m pytest -q
 
-# Start the HTTP service
-make serve SPEC=examples/finance-router-harness.toml
-
-# Start the ASGI service (FastAPI + uvicorn)
-make serve-asgi
+# Start the ASGI service
+make serve
 ```
 
 ## Development Commands
@@ -85,11 +67,9 @@ make serve-asgi
 | `make test`        | Run pytest suite                                   |
 | `make lint`        | Run ruff linter                                    |
 | `make format`      | Run ruff formatter                                 |
-| `make serve`       | Start stdlib HTTP server                           |
-| `make serve-asgi`  | Start FastAPI ASGI application                     |
+| `make serve`       | Start ASGI server                                  |
 | `make mock-workflow`| Start mock workflow server for E2E testing        |
 | `make e2e`         | Run end-to-end test with mock workflow             |
-| `make show-suite`  | Display regression suite summary                   |
 | `make clean`       | Remove build artifacts                             |
 
 ## HTTP API
@@ -97,8 +77,7 @@ make serve-asgi
 | Method | Path                       | Description                          |
 | ------ | -------------------------- | ------------------------------------ |
 | GET    | `/healthz`                 | Liveness check                       |
-| GET    | `/readyz`                  | Readiness check with LLM status      |
-| GET    | `/` or `/validator`        | Browser validation UI                |
+| GET    | `/`                        | Service info page                    |
 | POST   | `/api/v1/message`          | Assistant protocol message entrypoint|
 | POST   | `/api/v1/task/completion`  | Task completion callback             |
 

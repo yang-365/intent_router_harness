@@ -2,38 +2,30 @@
 
 ## Project Structure & Module Organization
 
-This is a Python 3.11+ package using a `src/` layout.
+This is a Python 3.11+ package using a `src/` layout. The runtime is exclusively `harness_v2` — a thin enterprise shell over the deepagent SDK.
 
-### Core package (`src/intent_router_harness/`)
+### Core package (`src/intent_router_harness/harness_v2/`)
 
-| Module / Subpackage | Purpose |
-| ------------------- | ------- |
-| `deepagent/`        | DeepAgent harness runtime — error hierarchy (`errors.py`), LangGraph middleware (`middleware.py`), `NativeDeepAgentRunner` (`runner.py`), `DeepAgentAssistantProtocolService` (`service.py`), shared helpers (`helpers.py`) |
-| `serving/`          | HTTP serving layer — FastAPI ASGI app (`asgi.py`), stdlib HTTP server (`server.py`), browser validation UI (`debug_ui.py`) |
-| `contracts.py`      | Pydantic request/response models for the assistant protocol |
-| `runtime.py`        | `PromptHarness`, spec loading, skill binding |
-| `service.py`        | `IntentRouterHarnessService` — top-level service orchestration |
-| `session_store.py`  | In-memory session management |
-| `skills.py`         | Skill document loading & library |
-| `workflow.py`       | Workflow SSE parsing, HTTP client, tool specs |
-| `llm.py`            | LLM client configuration |
-| `_version.py`       | Single source of truth for package version |
-
-Backward-compatible shim modules (`asgi.py`, `server.py`, `debug_ui.py`, `deepagent_service.py`) re-export from the new subpackages so existing import paths continue to work.
+| Module | Purpose |
+| ------ | ------- |
+| `agent.py` | `build_agent()` — zero-invasion deepagent `create_deep_agent()` wrapper |
+| `api.py` | FastAPI app factory — `/api/v1/message`, `/api/v1/task/completion`, health |
+| `config.py` | `HarnessConfig` — TOML spec loading |
+| `errors.py` | Error hierarchy (`HarnessError`, `SessionBusyError`, `WorkflowExecutionError`, etc.) |
+| `middleware.py` | 6 enterprise middleware: TaskProgress, CompletionGate, SkillLifecycle, SkillFile, WorkflowGateway, ProtocolOutput |
+| `protocol.py` | `AssistantProtocolFrame`, `MessageRequest`, `TaskCompletionRequest`, `TraceEvent` |
+| `session.py` | `SessionManager` — multi-user isolation + concurrency locks |
+| `skill_registry.py` | `SkillRegistry` — filesystem-based skill index, metadata scan, on-demand body loading |
+| `workflow.py` | `workflow_api_call` StructuredTool + SSE parsing |
 
 ### Supporting directories
 
-- `tests/unit/`: Unit tests (no network required).
+- `tests/unit/`: Unit tests for harness_v2 modules (no network required).
 - `tests/integration/`: Integration tests (ASGI endpoints, E2E flows).
-- `docs/architecture/`: High-level design, protocol compatibility, runtime design.
-- `docs/development/`: Deployment, E2E testing, workflow tool calling, handoff notes.
-- `docs/product/`: Product requirements, regression specs, user-facing docs.
-- `examples/`: Sample harness specs, mock servers, local clients.
+- `docs/architecture/`: High-level design documents.
+- `docs/development/`: Deployment and development guides.
+- `examples/`: Sample harness specs, mock servers, E2E scripts.
 - `skills/`: Sample business skills and references.
-- `regressions/`: Structured regression suites (JSON fixtures).
-- `hooks/`: Workflow tool lifecycle hooks.
-- `tools/`: Command-backed runtime tools.
-- `k8s/`: Kubernetes deployment manifests.
 
 ## Build, Test, and Development Commands
 
@@ -42,15 +34,11 @@ make install          # Install with test dependencies
 make test             # Run full pytest suite
 make lint             # Run ruff linter
 make format           # Run ruff formatter
-make serve            # Start stdlib HTTP server
-make serve-asgi       # Start FastAPI ASGI application
+make serve            # Start ASGI server
 make mock-workflow    # Start mock workflow server for E2E
 make e2e              # Run E2E test with mock workflow
-make show-suite       # Display regression suite summary
 make clean            # Remove build artifacts
 ```
-
-After installation, the console script `intent-router-harness` replaces `PYTHONPATH=src python -m intent_router_harness`.
 
 ## Coding Style & Naming Conventions
 
@@ -64,11 +52,11 @@ Framework code must stay business-agnostic. Do not hard-code business intent cod
 
 ## Testing Guidelines
 
-Use pytest. Place unit tests in `tests/unit/` and integration tests in `tests/integration/`. Use filenames like `test_service.py` and functions like `test_service_renders_prompt_response`. Prefer focused tests that exercise public behavior: prompt rendering, HTTP/ASGI endpoints, assistant protocol parsing, and regression validation. For changes affecting stream behavior, cover both SSE and non-stream responses when practical.
+Use pytest. Place unit tests in `tests/unit/` and integration tests in `tests/integration/`. Filenames follow `test_harness_v2_<module>.py` convention. Prefer focused tests that exercise public behavior. For changes affecting stream behavior, cover both SSE and non-stream responses when practical.
 
 ## Commit & Pull Request Guidelines
 
-Use concise imperative commit messages such as `Add assistant protocol regression validation`. Pull requests should include a short description, affected modules or endpoints, test commands run, and any changes to examples, regression fixtures, environment variables, or deployment manifests.
+Use Conventional Commits: `type(scope): description`. Pull requests should include a short description, affected modules or endpoints, test commands run, and any changes to examples or environment variables.
 
 ## Security & Configuration Tips
 

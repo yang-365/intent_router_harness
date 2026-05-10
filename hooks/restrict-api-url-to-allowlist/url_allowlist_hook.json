@@ -1,5 +1,0 @@
-{
-  "name": "restrict-api-url-to-allowlist",
-  "events": ["before_workflow_tool_call"],
-  "command": ["python", "enforce_url_allowlist.py"]
-}
