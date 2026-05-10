@@ -2,21 +2,61 @@
 
 ## Project Structure & Module Organization
 
-This is a Python 3.11+ package using a `src/` layout. Core package code lives in `src/intent_router_harness/`, including prompt runtime, service layers, ASGI/server entrypoints, LLM integration, regression validation, and assistant protocol contracts. Tests live in `tests/` and use pytest. Example harness specs are in `examples/`; sample skills and references are in `skills/`; structured regression data is in `regressions/`; architecture and deployment notes are in `docs/`; Kubernetes manifests are in `k8s/`.
+This is a Python 3.11+ package using a `src/` layout.
+
+### Core package (`src/intent_router_harness/`)
+
+| Module / Subpackage | Purpose |
+| ------------------- | ------- |
+| `deepagent/`        | DeepAgent harness runtime — error hierarchy (`errors.py`), LangGraph middleware (`middleware.py`), `NativeDeepAgentRunner` (`runner.py`), `DeepAgentAssistantProtocolService` (`service.py`), shared helpers (`helpers.py`) |
+| `serving/`          | HTTP serving layer — FastAPI ASGI app (`asgi.py`), stdlib HTTP server (`server.py`), browser validation UI (`debug_ui.py`) |
+| `contracts.py`      | Pydantic request/response models for the assistant protocol |
+| `runtime.py`        | `PromptHarness`, spec loading, skill binding |
+| `service.py`        | `IntentRouterHarnessService` — top-level service orchestration |
+| `session_store.py`  | In-memory session management |
+| `skills.py`         | Skill document loading & library |
+| `workflow.py`       | Workflow SSE parsing, HTTP client, tool specs |
+| `llm.py`            | LLM client configuration |
+| `_version.py`       | Single source of truth for package version |
+
+Backward-compatible shim modules (`asgi.py`, `server.py`, `debug_ui.py`, `deepagent_service.py`) re-export from the new subpackages so existing import paths continue to work.
+
+### Supporting directories
+
+- `tests/unit/`: Unit tests (no network required).
+- `tests/integration/`: Integration tests (ASGI endpoints, E2E flows).
+- `docs/architecture/`: High-level design, protocol compatibility, runtime design.
+- `docs/development/`: Deployment, E2E testing, workflow tool calling, handoff notes.
+- `docs/product/`: Product requirements, regression specs, user-facing docs.
+- `examples/`: Sample harness specs, mock servers, local clients.
+- `skills/`: Sample business skills and references.
+- `regressions/`: Structured regression suites (JSON fixtures).
+- `hooks/`: Workflow tool lifecycle hooks.
+- `tools/`: Command-backed runtime tools.
+- `k8s/`: Kubernetes deployment manifests.
 
 ## Build, Test, and Development Commands
 
-- `python -m pip install -e '.[test]'`: install the package locally with test dependencies.
-- `python -m pytest -q`: run the full pytest suite.
-- `PYTHONPATH=src python -m intent_router_harness show-suite regressions/assistant_protocol_v0_5.json`: inspect the assistant protocol regression suite.
-- `PYTHONPATH=src python -m intent_router_harness serve examples/finance-router-harness.toml --port 8765`: run the stdlib HTTP service locally.
-- `PYTHONPATH=src python -m intent_router_harness serve-asgi --host 0.0.0.0 --port 8765`: run the ASGI app for FastAPI/uvicorn-style deployment.
+```bash
+make install          # Install with test dependencies
+make test             # Run full pytest suite
+make lint             # Run ruff linter
+make format           # Run ruff formatter
+make serve            # Start stdlib HTTP server
+make serve-asgi       # Start FastAPI ASGI application
+make mock-workflow    # Start mock workflow server for E2E
+make e2e              # Run E2E test with mock workflow
+make show-suite       # Display regression suite summary
+make clean            # Remove build artifacts
+```
 
-After installation, the console script `intent-router-harness` can replace `PYTHONPATH=src python -m intent_router_harness`.
+After installation, the console script `intent-router-harness` replaces `PYTHONPATH=src python -m intent_router_harness`.
 
 ## Coding Style & Naming Conventions
 
-Follow the existing Python style: 4-space indentation, type annotations for public interfaces, `from __future__ import annotations`, Pydantic models for request/response contracts, and small functions with explicit error types. Use `snake_case` for functions, variables, files, and test names; use `PascalCase` for classes and Pydantic models. Keep imports grouped as standard library, third-party, then local package imports. No formatter or linter config is currently checked in, so keep edits consistent with nearby code.
+Follow the existing Python style: 4-space indentation, type annotations for public interfaces, `from __future__ import annotations`, Pydantic models for request/response contracts, and small functions with explicit error types. Use `snake_case` for functions, variables, files, and test names; use `PascalCase` for classes and Pydantic models. Keep imports grouped as standard library, third-party, then local package imports.
+
+Ruff is configured in `pyproject.toml` with line-length 120 and rules: `E`, `W`, `F`, `I`, `UP`, `B`, `SIM`, `TID`. Prefer inline `# noqa: RULE` for individual exceptions; reserve `per-file-ignores` for categorical policy (e.g., `tests/**`).
 
 ## Framework Boundary Rules
 
@@ -24,11 +64,11 @@ Framework code must stay business-agnostic. Do not hard-code business intent cod
 
 ## Testing Guidelines
 
-Use pytest. Place tests in `tests/` with filenames like `test_service.py` and functions like `test_service_renders_prompt_response`. Prefer focused tests that exercise public behavior: prompt rendering, HTTP/ASGI endpoints, assistant protocol parsing, and regression validation. For changes affecting stream behavior, cover both SSE and non-stream responses when practical.
+Use pytest. Place unit tests in `tests/unit/` and integration tests in `tests/integration/`. Use filenames like `test_service.py` and functions like `test_service_renders_prompt_response`. Prefer focused tests that exercise public behavior: prompt rendering, HTTP/ASGI endpoints, assistant protocol parsing, and regression validation. For changes affecting stream behavior, cover both SSE and non-stream responses when practical.
 
 ## Commit & Pull Request Guidelines
 
-Git history currently contains a single initial commit, so use concise imperative commit messages such as `Add assistant protocol regression validation`. Pull requests should include a short description, affected modules or endpoints, test commands run, and any changes to examples, regression fixtures, environment variables, or deployment manifests. Include screenshots only for documentation or UI-rendered artifacts.
+Use concise imperative commit messages such as `Add assistant protocol regression validation`. Pull requests should include a short description, affected modules or endpoints, test commands run, and any changes to examples, regression fixtures, environment variables, or deployment manifests.
 
 ## Security & Configuration Tips
 
