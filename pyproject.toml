@@ -6,12 +6,26 @@ build-backend = "hatchling.build"
 name = "intent-router-harness"
 version = "0.1.0"
 description = "Standalone spec-driven harness for intent routing experiments."
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
+keywords = ["agents", "ai", "intent-routing", "llm", "langgraph", "langchain", "assistant-protocol"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
-  "fastapi>=0.115",
-  "pydantic>=2.0",
-  "pydantic-settings>=2.0",
-  "uvicorn[standard]>=0.30",
+    "fastapi>=0.115",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.scripts]
@@ -19,13 +33,53 @@ intent-router-harness = "intent_router_harness.__main__:main"
 
 [project.optional-dependencies]
 deepagent = [
-  "deepagents>=0.2.0",
-  "langchain-openai>=1.1.0",
+    "deepagents>=0.2.0",
+    "langchain-openai>=1.1.0",
 ]
 test = [
-  "httpx>=0.28",
-  "pytest>=8.0",
+    "httpx>=0.28",
+    "pytest>=8.0",
+    "ruff>=0.8.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/yang-365/intent_router_harness"
+
+# ---------------------------------------------------------------------------
+# Ruff – linter & formatter
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "TID",    # flake8-tidy-imports
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B905",   # zip without strict= (Python 3.10+ feature)
+    "SIM108", # ternary operator — readability preference
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["intent_router_harness"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "B011",   # assert False
+]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

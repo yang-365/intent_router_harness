@@ -1,66 +1,130 @@
 # intent_router_harness
 
-`intent_router_harness` is a standalone assistant-protocol router for intent
-recognition, serial business task queues, skill-constrained slot filling, and
-task completion callbacks.
+A standalone assistant-protocol router for intent recognition, serial business
+task queues, skill-constrained slot filling, and task completion callbacks.
 
-It does not import, patch, or configure any production router project. The
-project owns its own specs, skills, regression data, tests, and local service.
+The project owns its own specs, skills, regression data, tests, and local
+service — it does not import or patch any production router.
 
-## Core Model
+## Key Features
 
-- `agent.md` is loaded as the root instruction layer.
-- The first LLM call performs intent recognition and multi-intent splitting
-  using only skill `name`, `description`, and `intent_codes`.
-- The service owns `task_list` ordering and chooses one `current_task`.
-- The second LLM call loads only the current task's `SKILL.md` body and fills
-  only that task's slots.
-- Skill frontmatter declares one `intent_code` and its `required_slots`.
-- The service computes `waiting_user_input` or `ready_for_dispatch` from
-  `required_slots`; LLM output is not the source of truth for task readiness.
-- Skill and reference bodies are not stored in session state.
+- **Dual runtime**: Classic two-phase LLM pipeline or DeepAgent (LangGraph)
+  harness runtime, selectable per spec.
+- **Assistant Protocol**: Structured frame-based protocol with SSE streaming
+  support, trace events, and task-level state management.
+- **Workflow tool integration**: HTTP workflow API calls with URL whitelist
+  validation, SSE parsing, before/after lifecycle hooks, and comprehensive
+  error classification.
+- **Multi-task planning**: Serial task queue with `task_list` / `current_task`
+  tracking, slot memory isolation per task.
+- **Regression suite**: JSON-driven test fixtures for assistant protocol
+  validation with transcript-level assertion.
 
-## Layout
+## Project Layout
 
-- `src/intent_router_harness`: router runtime, service, session, LLM, and skill loading code.
-- `examples`: sample service specs, mock servers, and local clients.
-- `hooks`: workflow tool lifecycle hooks. Hook commands are runtime-only and never rendered into prompts.
-- `tools`: command-backed runtime tools, including workflow API execution.
-- `regressions`: structured regression suites.
-- `skills`: sample business skills and references.
-- `tests`: pytest coverage for service behavior and protocol rules.
-
-## Commands
-
-```bash
-python -m pytest -q
-PYTHONPATH=src python -m intent_router_harness show-suite regressions/assistant_protocol_v0_6.json
-PYTHONPATH=src python -m intent_router_harness llm-smoke --env-file .env.local
-PYTHONPATH=src python -m intent_router_harness serve examples/finance-router-harness.toml --port 8765
-PYTHONPATH=src python -m intent_router_harness serve-asgi --host 0.0.0.0 --port 8765
-python examples/mock_workflow_server.py --host 127.0.0.1 --port 9876
-python examples/router_message_client.py --base-url http://127.0.0.1:8765 --execution-mode execute --txt '给陈广荣转500元'
+```
+intent_router_harness/
+├── src/intent_router_harness/    # Core package
+│   ├── deepagent/                # DeepAgent runtime subpackage
+│   │   ├── errors.py             #   Error hierarchy
+│   │   ├── helpers.py            #   Shared helpers & protocol builders
+│   │   ├── middleware.py          #   LangGraph middleware controls
+│   │   ├── runner.py             #   NativeDeepAgentRunner
+│   │   └── service.py            #   DeepAgentAssistantProtocolService
+│   ├── serving/                  # HTTP serving layer
+│   │   ├── asgi.py               #   FastAPI ASGI application
+│   │   ├── server.py             #   Stdlib HTTP server
+│   │   └── debug_ui.py           #   Browser validation UI
+│   ├── contracts.py              # Pydantic request/response models
+│   ├── runtime.py                # PromptHarness & spec loading
+│   ├── service.py                # IntentRouterHarnessService
+│   ├── session_store.py          # In-memory session management
+│   ├── skills.py                 # Skill document loading
+│   ├── workflow.py               # Workflow SSE parsing & HTTP client
+│   └── _version.py               # Single source of truth for version
+├── tests/
+│   ├── unit/                     # Unit tests (no network)
+│   └── integration/              # Integration tests (ASGI, E2E)
+├── docs/
+│   ├── architecture/             # High-level design & protocol docs
+│   ├── development/              # Developer setup, deployment, E2E testing
+│   └── product/                  # Product requirements & regression specs
+├── examples/                     # Sample specs, mock servers, clients
+├── skills/                       # Sample business skills & references
+├── regressions/                  # Structured regression suites
+├── hooks/                        # Workflow lifecycle hooks
+├── tools/                        # Command-backed runtime tools
+├── k8s/                          # Kubernetes manifests
+├── Makefile                      # Standard development targets
+├── pyproject.toml                # Build config, dependencies, ruff/pytest
+└── .env.example                  # Environment variable template
 ```
 
-After installing the package, the same commands are available through
-`intent-router-harness`.
+## Quick Start
 
-## HTTP Service
+```bash
+# Install with test dependencies
+pip install -e '.[test]'
 
-- `GET /healthz`: liveness check.
-- `GET /readyz`: readiness check and LLM configuration visibility.
-- `GET /` or `/validator`: browser validation UI.
-- `POST /api/v1/message`: assistant protocol message entrypoint.
-- `POST /api/v1/task/completion`: task completion callback.
+# Run full test suite
+make test
+# or: python -m pytest -q
+
+# Start the HTTP service
+make serve SPEC=examples/finance-router-harness.toml
+
+# Start the ASGI service (FastAPI + uvicorn)
+make serve-asgi
+```
+
+## Development Commands
+
+| Command            | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `make install`     | Install package with test dependencies             |
+| `make test`        | Run pytest suite                                   |
+| `make lint`        | Run ruff linter                                    |
+| `make format`      | Run ruff formatter                                 |
+| `make serve`       | Start stdlib HTTP server                           |
+| `make serve-asgi`  | Start FastAPI ASGI application                     |
+| `make mock-workflow`| Start mock workflow server for E2E testing        |
+| `make e2e`         | Run end-to-end test with mock workflow             |
+| `make show-suite`  | Display regression suite summary                   |
+| `make clean`       | Remove build artifacts                             |
+
+## HTTP API
+
+| Method | Path                       | Description                          |
+| ------ | -------------------------- | ------------------------------------ |
+| GET    | `/healthz`                 | Liveness check                       |
+| GET    | `/readyz`                  | Readiness check with LLM status      |
+| GET    | `/` or `/validator`        | Browser validation UI                |
+| POST   | `/api/v1/message`          | Assistant protocol message entrypoint|
+| POST   | `/api/v1/task/completion`  | Task completion callback             |
 
 ```bash
 curl -s http://127.0.0.1:8765/api/v1/message \
   -H 'Content-Type: application/json' \
   -d '{
-    "sessionId": "assistant_demo_001",
+    "sessionId": "demo_001",
     "custID": "C0001",
     "txt": "给小明转账200元",
     "stream": true,
     "executionMode": "router_only"
   }'
 ```
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in provider credentials:
+
+```bash
+cp .env.example .env
+# Edit .env with your LLM provider settings
+```
+
+See `examples/` for sample harness spec files.
+
+## License
+
+See [LICENSE](LICENSE) for details.
