@@ -19,6 +19,8 @@ from intent_router_harness.harness_v2.protocol import (
     MessageRequest,
     TaskCompletionRequest,
     TraceEvent,
+    emit_trace,
+    trace_collector_init,
 )
 from intent_router_harness.harness_v2.session import SessionManager
 
@@ -106,42 +108,37 @@ def create_app(
         try:
             with ha.session_mgr.acquire(request.custID, request.sessionId) as meta:
                 thread_id = meta.thread_id
-                trace_events: list[TraceEvent] = []
-                trace_events.append(
-                    TraceEvent(
-                        stage="request_received",
-                        title="请求进入Router",
-                        summary=f"session={request.sessionId}，executionMode={request.executionMode}",
-                        data={
-                            "session_id": request.sessionId,
-                            "cust_id": request.custID,
-                            "execution_mode": request.executionMode,
-                            "txt": request.txt,
-                        },
-                    )
+                # Initialise per-request trace collector so middleware
+                # events are captured alongside the high-level API traces.
+                mw_trace_buf = trace_collector_init()
+
+                emit_trace(
+                    "request_received",
+                    "请求进入Router",
+                    f"session={request.sessionId}，executionMode={request.executionMode}",
+                    session_id=request.sessionId,
+                    cust_id=request.custID,
+                    execution_mode=request.executionMode,
+                    txt=request.txt,
                 )
                 user_input = _build_user_input(request)
-                trace_events.append(
-                    TraceEvent(
-                        stage="deepagent_runtime_start",
-                        title="DeepAgent运行开始",
-                        summary=f"thread_id={thread_id}",
-                        data={"thread_id": thread_id},
-                    )
+                emit_trace(
+                    "deepagent_runtime_start",
+                    "DeepAgent运行开始",
+                    f"thread_id={thread_id}",
+                    thread_id=thread_id,
                 )
                 result = _invoke_agent(ha.agent, user_input, thread_id)
                 frames = _extract_frames(result)
-                trace_events.append(
-                    TraceEvent(
-                        stage="assistant_protocol_frames",
-                        title="SSE业务帧生成",
-                        summary=f"生成 {len(frames)} 个 message frame",
-                        data={
-                            "frame_count": len(frames),
-                            "frames": [f.protocol_dump() for f in frames],
-                        },
-                    )
+                emit_trace(
+                    "assistant_protocol_frames",
+                    "SSE业务帧生成",
+                    f"生成 {len(frames)} 个 message frame",
+                    frame_count=len(frames),
+                    frames=[f.protocol_dump() for f in frames],
                 )
+                # Collect all trace events (API-level + middleware-level)
+                trace_events: list[TraceEvent] = list(mw_trace_buf)
                 payloads = [f.protocol_dump() for f in frames]
                 if request.stream:
                     trace_payloads = (
@@ -283,33 +280,33 @@ def _extract_frames(result: dict[str, Any]) -> list[AssistantProtocolFrame]:
         for raw in payload["frames"]:
             frames.append(AssistantProtocolFrame(**{
                 "ok": raw.get("ok", True),
-                "status": raw.get("status", "running"),
-                "completion_state": raw.get("completion_state", 0),
-                "completion_reason": raw.get("completion_reason", ""),
+                "status": raw.get("status") or "running",
+                "completion_state": raw.get("completion_state") or 0,
+                "completion_reason": raw.get("completion_reason") or "",
                 "message": raw.get("message"),
-                "output": raw.get("output", {}),
-                "slot_memory": raw.get("slot_memory", {}),
-                "task_list": raw.get("task_list", []),
+                "output": raw.get("output") or {},
+                "slot_memory": raw.get("slot_memory") or {},
+                "task_list": raw.get("task_list") or [],
                 "current_task": raw.get("current_task"),
                 "intent_code": raw.get("intent_code"),
                 "stage": raw.get("stage"),
                 "details": raw.get("details"),
                 "errorCode": raw.get("errorCode"),
                 "graph": raw.get("graph"),
-                "actions": raw.get("actions", []),
+                "actions": raw.get("actions") or [],
             }))
         return frames if frames else [_fallback_frame("empty frames array")]
 
     if isinstance(payload, dict) and "status" in payload:
         return [AssistantProtocolFrame(**{
             "ok": payload.get("ok", True),
-            "status": payload.get("status", "running"),
-            "completion_state": payload.get("completion_state", 0),
-            "completion_reason": payload.get("completion_reason", ""),
+            "status": payload.get("status") or "running",
+            "completion_state": payload.get("completion_state") or 0,
+            "completion_reason": payload.get("completion_reason") or "",
             "message": payload.get("message"),
-            "output": payload.get("output", {}),
-            "slot_memory": payload.get("slot_memory", {}),
-            "task_list": payload.get("task_list", []),
+            "output": payload.get("output") or {},
+            "slot_memory": payload.get("slot_memory") or {},
+            "task_list": payload.get("task_list") or [],
             "current_task": payload.get("current_task"),
             "intent_code": payload.get("intent_code"),
         })]

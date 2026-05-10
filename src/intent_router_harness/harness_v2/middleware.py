@@ -19,6 +19,8 @@ import json
 import logging
 from typing import Any
 
+from intent_router_harness.harness_v2.protocol import emit_trace
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,6 +87,11 @@ def build_harness_middleware(
                 "- 当前任务未完成前，不要开始下一个任务\n"
                 "- workflow_api_call 完成后，将状态设为 waiting_assistant_completion，等待前端确认\n"
             )
+            emit_trace(
+                "task_constraints_injected",
+                "任务执行约束注入",
+                "串行执行、缺槽追问、前端确认完成",
+            )
             system_message = SystemMessage(
                 content=f"{existing_text}{constraint_block}" if existing_text else constraint_block.strip()
             )
@@ -136,6 +143,13 @@ def build_harness_middleware(
                 )
             sections.append("请结合以上前端上下文进行意图识别和任务规划。")
 
+            emit_trace(
+                "frontend_context_injected",
+                "前端上下文注入",
+                f"recommendTask={len(recommend_task)}项, currentDisplay={len(current_display)}项",
+                recommend_task=recommend_task,
+                current_display=current_display,
+            )
             context_block = "\n\n## Frontend Context\n" + "\n\n".join(sections)
             system_message = SystemMessage(
                 content=f"{existing_text}{context_block}" if existing_text else context_block.strip()
@@ -197,6 +211,11 @@ def build_harness_middleware(
             if not any(self._is_workflow_result(msg, ToolMessage) for msg in messages):
                 return None
             logger.info("CompletionGate: workflow result detected, terminating loop")
+            emit_trace(
+                "completion_gate_triggered",
+                "任务完成门控触发",
+                "检测到workflow返回结果，终止agent循环，等待前端确认",
+            )
             return {
                 "jump_to": "end",
                 "messages": [
@@ -289,8 +308,26 @@ def build_harness_middleware(
                     self._loaded_skill,
                     target_skill,
                 )
+                emit_trace(
+                    "skill_unloaded",
+                    "技能卸载",
+                    f"卸载技能: {self._loaded_skill}",
+                    skill_name=self._loaded_skill,
+                )
+                emit_trace(
+                    "skill_loaded",
+                    "技能加载",
+                    f"加载技能: {target_skill}",
+                    skill_name=target_skill,
+                )
             else:
                 logger.info("SkillLifecycle: loading skill=%s", target_skill)
+                emit_trace(
+                    "skill_loaded",
+                    "技能加载",
+                    f"加载技能: {target_skill}",
+                    skill_name=target_skill,
+                )
             self._loaded_skill = target_skill
             return self._inject_single_skill(request, target_skill)
 
@@ -304,6 +341,13 @@ def build_harness_middleware(
             if not skill_blocks:
                 return request
             logger.info("SkillLifecycle: eagerly loading all %d skills", len(skill_blocks))
+            emit_trace(
+                "skills_eager_loaded",
+                "全量技能预加载",
+                f"首轮注入全部 {len(skill_blocks)} 个技能上下文",
+                skill_count=len(skill_blocks),
+                skill_names=list(self._registry.names()),
+            )
             combined = "\n".join(skill_blocks)
             existing = request.system_message
             existing_text = existing.text if existing is not None else ""
@@ -458,6 +502,12 @@ def build_harness_middleware(
 
             content = self._resolve_virtual_path(normalized)
             if content is not None:
+                emit_trace(
+                    "skill_file_read",
+                    "技能文件读取",
+                    f"读取: {normalized}",
+                    path=normalized,
+                )
                 return ToolMessage(
                     content=content,
                     tool_call_id=_tool_call_id(request),
@@ -532,9 +582,25 @@ def build_harness_middleware(
                 rejection = self._check_url(request)
                 if rejection is not None:
                     return rejection
+                args = _tool_args(request)
+                emit_trace(
+                    "workflow_call_started",
+                    "Workflow API调用开始",
+                    f"method={args.get('method', 'POST')} url={args.get('url', '')}",
+                    method=args.get("method", "POST"),
+                    url=args.get("url", ""),
+                    body=args.get("body", {}),
+                )
                 self._run_before_hooks(request)
                 result = handler(request)
                 self._run_after_hooks(request, result)
+                result_content = getattr(result, "content", "") if result else ""
+                emit_trace(
+                    "workflow_call_completed",
+                    "Workflow API调用完成",
+                    f"返回结果长度: {len(result_content)} 字符",
+                    result_preview=result_content[:500] if result_content else "",
+                )
                 return result
             return handler(request)
 
@@ -543,9 +609,25 @@ def build_harness_middleware(
                 rejection = self._check_url(request)
                 if rejection is not None:
                     return rejection
+                args = _tool_args(request)
+                emit_trace(
+                    "workflow_call_started",
+                    "Workflow API调用开始",
+                    f"method={args.get('method', 'POST')} url={args.get('url', '')}",
+                    method=args.get("method", "POST"),
+                    url=args.get("url", ""),
+                    body=args.get("body", {}),
+                )
                 self._run_before_hooks(request)
                 result = await handler(request)
                 self._run_after_hooks(request, result)
+                result_content = getattr(result, "content", "") if result else ""
+                emit_trace(
+                    "workflow_call_completed",
+                    "Workflow API调用完成",
+                    f"返回结果长度: {len(result_content)} 字符",
+                    result_preview=result_content[:500] if result_content else "",
+                )
                 return result
             return await handler(request)
 
@@ -559,6 +641,13 @@ def build_harness_middleware(
                 return None
             allowed_list = sorted(self._allowed)
             logger.warning("workflow URL rejected: %s (allowed: %s)", url, allowed_list)
+            emit_trace(
+                "workflow_url_rejected",
+                "Workflow URL白名单拒绝",
+                f"URL不在白名单: {url}",
+                rejected_url=url,
+                allowed_urls=allowed_list,
+            )
             return ToolMessage(
                 content=(
                     f"Error: URL '{url}' is not in the allowed list.\n"
@@ -621,9 +710,51 @@ def build_harness_middleware(
             if isinstance(frames, list):
                 for frame in frames:
                     _fill_frame_defaults(frame)
+                    self._emit_frame_trace(frame)
             elif "status" in payload:
                 _fill_frame_defaults(payload)
+                self._emit_frame_trace(payload)
             return None
+
+        @staticmethod
+        def _emit_frame_trace(frame: dict[str, Any]) -> None:
+            """Emit trace events for key fields in a protocol frame."""
+            intent_code = frame.get("intent_code")
+            if intent_code:
+                emit_trace(
+                    "intent_recognized",
+                    "意图识别",
+                    f"识别意图: {intent_code}",
+                    intent_code=intent_code,
+                )
+            slot_memory = frame.get("slot_memory")
+            if slot_memory and isinstance(slot_memory, dict) and slot_memory:
+                emit_trace(
+                    "slots_extracted",
+                    "参数提取",
+                    f"提取参数: {', '.join(f'{k}={v}' for k, v in slot_memory.items())}",
+                    slot_memory=slot_memory,
+                )
+            task_list = frame.get("task_list")
+            if task_list and isinstance(task_list, list) and len(task_list) > 0:
+                emit_trace(
+                    "task_planned",
+                    "任务规划",
+                    f"规划了 {len(task_list)} 个任务",
+                    task_list=task_list,
+                    current_task=frame.get("current_task"),
+                )
+            status = frame.get("status")
+            completion_state = frame.get("completion_state", 0)
+            if status:
+                emit_trace(
+                    "protocol_frame_output",
+                    "协议帧输出",
+                    f"status={status}, completion_state={completion_state}",
+                    status=status,
+                    completion_state=completion_state,
+                    message=frame.get("message", ""),
+                )
 
     # ------------------------------------------------------------------
     # Assembly
