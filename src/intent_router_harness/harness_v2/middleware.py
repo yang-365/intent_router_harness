@@ -11,6 +11,16 @@ Seven middleware classes handle everything that deepagent SDK does not provide:
 7. ProtocolOutputMiddleware — guarantee output conforms to AssistantProtocolFrame
 
 All business logic lives in skill files — middleware is business-agnostic.
+
+Execution order for the two critical harness flows:
+
+  Task flow:  intent identification → task planning → serial execution →
+              workflow call → wait for frontend /completion → next task
+
+  Skill flow: metadata summary (first call) → intent detected →
+              load skill body + references → slot extraction (guided by
+              slot_filling.md) → workflow call (guided by workflow_request.md)
+              → result → unload skill
 """
 
 from __future__ import annotations
@@ -249,26 +259,21 @@ def build_harness_middleware(
     # ------------------------------------------------------------------
 
     class SkillLifecycleMiddleware(AgentMiddleware):
-        """Progressive skill body loading/unloading per session context.
+        """Progressive skill loading/unloading per session context.
 
-        Skill name/description injection for intent recognition is handled
-        natively by deepagent SDK (via ``create_deep_agent(skills=...)``).
+        Enforces the correct execution order:
 
-        This middleware adds progressive body management:
+          1. First model call (no intent yet): inject lightweight metadata
+             summary (name + description + intent_codes) so LLM can identify
+             intent.  Full bodies and references are NOT loaded yet.
+          2. After intent detected: inject the matched skill's SKILL.md body
+             AND all reference files (slot_filling.md, workflow_request.md)
+             into the system prompt BEFORE the model runs, so that slot
+             extraction is guided by the business rules in references.
+          3. Task switch: unload previous skill context, load new skill.
 
-        Body loading:
-            - When agent identifies intent (intent_code in JSON output) →
-              inject the matched skill's SKILL.md body into context
-            - Reference summaries (id + purpose) listed so agent knows
-              what's available via read_file
-
-        Reference on-demand:
-            - Agent uses read_file to load specific references
-              (slot_filling.md, workflow_request.md)
-            - SkillFileMiddleware intercepts these reads
-
-        Unload: when task completes (completion_state=1 or agent moves
-        to next task), the skill body is NOT re-injected.
+        This ensures: metadata → intent identification → skill body +
+        reference load → slot extraction → workflow call.
         """
 
         def __init__(self, registry: Any | None = None) -> None:
@@ -280,89 +285,89 @@ def build_harness_middleware(
             return "SkillLifecycleMiddleware"
 
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
-            return handler(self._inject_skill_body(request))
+            return handler(self._prepare_skill_context(request))
 
         async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-            return await handler(self._inject_skill_body(request))
+            return await handler(self._prepare_skill_context(request))
 
-        def _inject_skill_body(self, request: Any) -> Any:
+        def _prepare_skill_context(self, request: Any) -> Any:
+            """Progressive skill injection — metadata first, body+refs after intent."""
             if self._registry is None:
                 return request
 
             messages = getattr(request, "messages", None) or []
             target_skill = self._detect_target_skill(messages)
 
-            # First model call (no prior AI messages): eagerly inject all
-            # skill bodies + references so the LLM has full context to
-            # identify intent AND call workflow_api_call in a single pass.
-            has_ai_history = any(isinstance(m, AIMessage) for m in messages)
-            if not has_ai_history and not self._loaded_skill:
-                return self._inject_all_skills(request)
+            # ---- Phase 1: no intent detected yet ----
+            # Inject only a lightweight metadata summary so the LLM can
+            # identify the correct intent.  Full bodies and references
+            # are deliberately NOT loaded to keep context lean and to
+            # enforce the correct ordering (reference AFTER intent).
+            if not target_skill and not self._loaded_skill:
+                return self._inject_metadata_summary(request)
 
-            if not target_skill or target_skill == self._loaded_skill:
-                return request
+            # ---- Phase 2: intent detected → load skill body + refs ----
+            if target_skill and target_skill != self._loaded_skill:
+                if self._loaded_skill:
+                    logger.info(
+                        "SkillLifecycle: unloading skill=%s, loading skill=%s",
+                        self._loaded_skill,
+                        target_skill,
+                    )
+                    emit_trace(
+                        "skill_unloaded",
+                        "技能卸载",
+                        f"卸载技能: {self._loaded_skill}",
+                        skill_name=self._loaded_skill,
+                    )
+                else:
+                    logger.info("SkillLifecycle: loading skill=%s", target_skill)
+                self._loaded_skill = target_skill
+                return self._inject_skill_with_references(request, target_skill)
 
+            # ---- Phase 3: skill already loaded, re-inject for context ----
             if self._loaded_skill:
-                logger.info(
-                    "SkillLifecycle: unloading skill=%s, loading skill=%s",
-                    self._loaded_skill,
-                    target_skill,
-                )
-                emit_trace(
-                    "skill_unloaded",
-                    "技能卸载",
-                    f"卸载技能: {self._loaded_skill}",
-                    skill_name=self._loaded_skill,
-                )
-                emit_trace(
-                    "skill_loaded",
-                    "技能加载",
-                    f"加载技能: {target_skill}",
-                    skill_name=target_skill,
-                )
-            else:
-                logger.info("SkillLifecycle: loading skill=%s", target_skill)
-                emit_trace(
-                    "skill_loaded",
-                    "技能加载",
-                    f"加载技能: {target_skill}",
-                    skill_name=target_skill,
-                )
-            self._loaded_skill = target_skill
-            return self._inject_single_skill(request, target_skill)
+                return self._inject_skill_with_references(request, self._loaded_skill)
 
-        def _inject_all_skills(self, request: Any) -> Any:
-            """Inject all skill bodies + references for first-turn context."""
-            skill_blocks: list[str] = []
-            for name in self._registry.names():
-                block = self._build_skill_block(name)
-                if block:
-                    skill_blocks.append(block)
-            if not skill_blocks:
+            return request
+
+        def _inject_metadata_summary(self, request: Any) -> Any:
+            """Inject lightweight skill metadata for intent recognition only."""
+            summary = self._registry.all_metadata_summary()
+            if not summary:
                 return request
-            logger.info("SkillLifecycle: eagerly loading all %d skills", len(skill_blocks))
-            emit_trace(
-                "skills_eager_loaded",
-                "全量技能预加载",
-                f"首轮注入全部 {len(skill_blocks)} 个技能上下文",
-                skill_count=len(skill_blocks),
-                skill_names=list(self._registry.names()),
-            )
-            combined = "\n".join(skill_blocks)
             existing = request.system_message
             existing_text = existing.text if existing is not None else ""
+            if "## Available Skills" in existing_text:
+                return request
+            emit_trace_once(
+                "skill_metadata_injected",
+                "技能元数据注入",
+                f"注入 {len(self._registry.names())} 个技能摘要用于意图识别",
+                skill_count=len(self._registry.names()),
+                skill_names=list(self._registry.names()),
+            )
             system_message = SystemMessage(
-                content=f"{existing_text}{combined}" if existing_text else combined.strip()
+                content=f"{existing_text}\n\n{summary}" if existing_text else summary
             )
             return request.override(system_message=system_message)
 
-        def _inject_single_skill(self, request: Any, skill_name: str) -> Any:
-            """Inject a single skill body + references."""
+        def _inject_skill_with_references(self, request: Any, skill_name: str) -> Any:
+            """Inject skill body + ALL reference files inline.
+
+            This is the critical step: references (slot_filling.md,
+            workflow_request.md) are injected BEFORE the model runs so
+            that slot extraction follows the business rules in references.
+            """
             skill_block = self._build_skill_block(skill_name)
             if not skill_block:
                 return request
             existing = request.system_message
             existing_text = existing.text if existing is not None else ""
+            # Remove any previous skill block to avoid stacking
+            if "\n\n## Loaded Skill:" in existing_text:
+                idx = existing_text.index("\n\n## Loaded Skill:")
+                existing_text = existing_text[:idx]
             system_message = SystemMessage(
                 content=f"{existing_text}{skill_block}" if existing_text else skill_block.strip()
             )
@@ -374,17 +379,34 @@ def build_harness_middleware(
             if not skill_body:
                 return None
             meta = self._registry.get_meta(skill_name)
+
+            emit_trace(
+                "skill_loaded",
+                "技能加载",
+                f"加载技能: {skill_name}",
+                skill_name=skill_name,
+            )
+
             ref_sections = ""
             if meta and meta.references:
                 ref_parts: list[str] = []
+                loaded_refs: list[str] = []
                 for ref in meta.references:
                     ref_body = self._registry.load_reference(skill_name, ref.id)
                     if ref_body:
                         ref_parts.append(
                             f"\n### Reference: {ref.id} — {ref.purpose}\n\n{ref_body}"
                         )
+                        loaded_refs.append(f"{ref.id}({ref.purpose})")
                 if ref_parts:
                     ref_sections = "\n".join(ref_parts)
+                    emit_trace(
+                        "skill_reference_loaded",
+                        "技能参考文件加载",
+                        f"加载 {len(ref_parts)} 个参考文件: {', '.join(loaded_refs)}",
+                        skill_name=skill_name,
+                        references=loaded_refs,
+                    )
             return (
                 f"\n\n## Loaded Skill: {skill_name}\n\n"
                 f"{skill_body}"
