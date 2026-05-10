@@ -44,8 +44,44 @@ class DeepAgentRuntimeError(RuntimeError):
 class WorkflowApiCallError(DeepAgentRuntimeError):
     """Raised when the DeepAgent workflow tool cannot complete."""
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message, code="workflow_error")
+    def __init__(self, message: str, *, code: str = "workflow_error") -> None:
+        super().__init__(message, code=code)
+
+
+class WorkflowUrlNotAllowedError(WorkflowApiCallError):
+    """URL failed the workflow allowed_urls whitelist check."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(f"workflow URL not in allowed_urls whitelist: {url}", code="workflow_url_not_allowed")
+
+
+class WorkflowTimeoutError(WorkflowApiCallError):
+    """Workflow call exceeded configured timeout."""
+
+    def __init__(self, url: str, timeout: float) -> None:
+        super().__init__(f"workflow call timed out after {timeout}s: {url}", code="workflow_timeout")
+
+
+class WorkflowHttpError(WorkflowApiCallError):
+    """Upstream workflow returned non-success HTTP status."""
+
+    def __init__(self, url: str, status_code: int) -> None:
+        super().__init__(f"workflow HTTP {status_code}: {url}", code="workflow_http_error")
+
+
+class WorkflowSseParseError(WorkflowApiCallError):
+    """Workflow SSE response could not be parsed."""
+
+    def __init__(self, url: str, detail: str = "") -> None:
+        suffix = f": {detail}" if detail else ""
+        super().__init__(f"workflow SSE parse error{suffix}: {url}", code="workflow_sse_parse_error")
+
+
+class WorkflowNoNodeOutputError(WorkflowApiCallError):
+    """SSE events lack required node_output."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(f"workflow SSE events missing node_output: {url}", code="workflow_no_node_output")
 
 
 class SessionRunInProgressError(RuntimeError):
@@ -436,41 +472,66 @@ class NativeDeepAgentRunner:
         """Call an allowed workflow use_as_tool endpoint and return parsed node outputs."""
         if self.workflow_tool is None:
             raise DeepAgentRuntimeError("workflow-api-call tool is not configured")
+        allowed_urls = list(self.harness.spec.workflow.allowed_urls)
+        if url not in allowed_urls:
+            raise WorkflowUrlNotAllowedError(url)
         payload = {
             "request": {"method": method, "url": url, "body": body},
-            "allowed_urls": list(self.harness.spec.workflow.allowed_urls),
+            "allowed_urls": allowed_urls,
         }
         try:
             run_workflow_hooks(self.workflow_hooks, event="before_workflow_tool_call", payload=payload)
+        except WorkflowHookError as exc:
+            raise WorkflowApiCallError(
+                f"before_workflow_tool_call hook rejected: {exc}",
+                code="workflow_hook_rejected",
+            ) from exc
+        timeout_seconds = 60.0
+        try:
             result = self.workflow_tool.run(
                 {
                     "method": method,
                     "url": url,
                     "body": body,
                 },
-                timeout_seconds=60,
+                timeout_seconds=timeout_seconds,
             )
-            workflow_result = parse_workflow_sse(str(result.get("text") or ""), require_node_output=True)
-            snapshot = WorkflowCallSnapshot(
-                method=method,
-                url=url,
-                body=body,
-                result=workflow_result,
-                intent_code=self._intent_code_for_workflow_url(url),
-                skill_name=self._skill_name_for_workflow_url(url),
-                slot_memory=_slot_memory_from_workflow_body(body),
-            )
-            _LAST_WORKFLOW_CALL.set(snapshot)
-            self._record_workflow_call(body, snapshot)
-        except (WorkflowHookError, WorkflowToolError, ToolRuntimeError) as exc:
-            request_summary = {
-                "method": method,
-                "url": url,
-                "body_keys": sorted(body) if isinstance(body, dict) else [],
-            }
+        except ToolRuntimeError as exc:
+            error_msg = str(exc)
+            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                raise WorkflowTimeoutError(url, timeout_seconds) from exc
             raise WorkflowApiCallError(
-                f"{exc}; workflow_api_call request={json.dumps(request_summary, ensure_ascii=False)}"
+                f"workflow tool error: {exc}", code="workflow_tool_error"
             ) from exc
+        raw_sse = str(result.get("text") or "")
+        try:
+            workflow_result = parse_workflow_sse(raw_sse, require_node_output=True)
+        except WorkflowToolError as exc:
+            error_msg = str(exc)
+            if "node_output" in error_msg:
+                raise WorkflowNoNodeOutputError(url) from exc
+            raise WorkflowSseParseError(url, detail=str(exc)) from exc
+        try:
+            run_workflow_hooks(self.workflow_hooks, event="after_workflow_tool_call", payload={
+                "request": {"method": method, "url": url, "body": body},
+                "result": {
+                    "event_count": len(workflow_result.events),
+                    "final_output": workflow_result.final_output,
+                },
+            })
+        except WorkflowHookError as exc:
+            logger.warning("after_workflow_tool_call hook error (non-fatal): %s", exc)
+        snapshot = WorkflowCallSnapshot(
+            method=method,
+            url=url,
+            body=body,
+            result=workflow_result,
+            intent_code=self._intent_code_for_workflow_url(url),
+            skill_name=self._skill_name_for_workflow_url(url),
+            slot_memory=_slot_memory_from_workflow_body(body),
+        )
+        _LAST_WORKFLOW_CALL.set(snapshot)
+        self._record_workflow_call(body, snapshot)
         return {
             "events": [
                 {
