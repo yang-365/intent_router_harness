@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from threading import Lock
-from typing import Any
 
-from intent_router_harness.harness_v2.errors import SessionBusyError, SessionExpiredError
+from intent_router_harness.harness_v2.errors import SessionBusyError
 
 
 @dataclass
@@ -18,14 +17,14 @@ class SessionMeta:
     thread_id: str
     cust_id: str
     session_id: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_active_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_active_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def is_expired(self, idle_timeout: timedelta) -> bool:
-        return (datetime.now(timezone.utc) - self.last_active_at) > idle_timeout
+        return (datetime.now(UTC) - self.last_active_at) > idle_timeout
 
     def touch(self) -> None:
-        self.last_active_at = datetime.now(timezone.utc)
+        self.last_active_at = datetime.now(UTC)
 
 
 class SessionManager:

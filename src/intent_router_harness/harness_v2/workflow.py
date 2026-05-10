@@ -72,17 +72,16 @@ def _execute_workflow_sse(
     """Execute an HTTP request to a workflow SSE endpoint and parse the result."""
     events: list[dict[str, Any]] = []
     try:
-        with httpx.Client(timeout=timeout) as client:
-            with client.stream(method.upper(), url, json=body) as response:
-                response.raise_for_status()
-                buffer = ""
-                for chunk in response.iter_text():
-                    buffer += chunk
-                    while "\n\n" in buffer:
-                        event_text, buffer = buffer.split("\n\n", 1)
-                        parsed = _parse_sse_event(event_text)
-                        if parsed is not None:
-                            events.append(parsed)
+        with httpx.Client(timeout=timeout) as client, client.stream(method.upper(), url, json=body) as response:
+            response.raise_for_status()
+            buffer = ""
+            for chunk in response.iter_text():
+                buffer += chunk
+                while "\n\n" in buffer:
+                    event_text, buffer = buffer.split("\n\n", 1)
+                    parsed = _parse_sse_event(event_text)
+                    if parsed is not None:
+                        events.append(parsed)
     except httpx.TimeoutException as exc:
         raise WorkflowExecutionError(f"workflow request timed out after {timeout}s") from exc
     except httpx.HTTPStatusError as exc:

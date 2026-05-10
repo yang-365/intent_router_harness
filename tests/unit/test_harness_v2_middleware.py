@@ -11,7 +11,6 @@ import pytest
 from intent_router_harness.harness_v2.errors import WorkflowUrlNotAllowedError
 from intent_router_harness.harness_v2.skill_registry import SkillRegistry
 
-
 # ---------------------------------------------------------------------------
 # Shared mock fixtures for langchain imports
 # ---------------------------------------------------------------------------

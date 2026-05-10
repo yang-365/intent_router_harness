@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from intent_router_harness.harness_v2.errors import (
     HarnessError,
     ProtocolOutputError,

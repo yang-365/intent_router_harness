@@ -41,6 +41,7 @@ intent_router_harness/
 │   └── development/              # Deployment guide
 ├── examples/                     # Sample specs, mock servers
 ├── skills/                       # Sample business skills & references
+├── k8s/                          # Kubernetes manifests
 ├── Makefile
 ├── pyproject.toml
 └── .env.example
@@ -103,6 +104,12 @@ cp .env.example .env
 ```
 
 See `examples/` for sample harness spec files.
+
+## Operations & Testing
+
+See [docs/development/OPERATIONS_MANUAL.md](docs/development/OPERATIONS_MANUAL.md) for the full
+operations manual covering configuration, startup, mock services, business scenario testing,
+E2E automation, and Kubernetes deployment.
 
 ## License
 

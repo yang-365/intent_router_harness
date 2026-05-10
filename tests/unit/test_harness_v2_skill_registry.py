@@ -7,8 +7,6 @@ from pathlib import Path
 import pytest
 
 from intent_router_harness.harness_v2.skill_registry import (
-    SkillMeta,
-    SkillReferenceMeta,
     SkillRegistry,
     _parse_skill_metadata,
     _split_frontmatter,

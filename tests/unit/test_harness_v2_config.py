@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
-
-import pytest
 
 from intent_router_harness.harness_v2.config import HarnessConfig, load_config
 
@@ -45,7 +42,7 @@ skills = ["/skills/"]
         agent_md.write_text("You are a helpful assistant.", encoding="utf-8")
         spec = tmp_path / "harness.toml"
         spec.write_text(
-            f'agent_paths = ["agent.md"]\n',
+            'agent_paths = ["agent.md"]\n',
             encoding="utf-8",
         )
         config = load_config(spec)
