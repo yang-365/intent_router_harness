@@ -157,19 +157,20 @@ def build_harness_middleware(
     # ------------------------------------------------------------------
 
     class SkillLifecycleMiddleware(AgentMiddleware):
-        """Progressive skill loading/unloading per session context.
+        """Progressive skill body loading/unloading per session context.
 
-        Phase 1 (intent recognition):
-            - Inject metadata summary of ALL skills into system prompt
-            - Agent matches user intent to a skill using name + description
+        Skill name/description injection for intent recognition is handled
+        natively by deepagent SDK (via ``create_deep_agent(skills=...)``).
 
-        Phase 2 (skill body loaded):
-            - When agent identifies intent → inject the matched skill's
-              SKILL.md body into context (intent boundary rules)
+        This middleware adds progressive body management:
+
+        Body loading:
+            - When agent identifies intent (intent_code in JSON output) →
+              inject the matched skill's SKILL.md body into context
             - Reference summaries (id + purpose) listed so agent knows
               what's available via read_file
 
-        Phase 3 (reference on-demand):
+        Reference on-demand:
             - Agent uses read_file to load specific references
               (slot_filling.md, workflow_request.md)
             - SkillFileMiddleware intercepts these reads
@@ -187,58 +188,57 @@ def build_harness_middleware(
             return "SkillLifecycleMiddleware"
 
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
-            return handler(self._inject_skill_context(request))
+            return handler(self._inject_skill_body(request))
 
         async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-            return await handler(self._inject_skill_context(request))
+            return await handler(self._inject_skill_body(request))
 
-        def _inject_skill_context(self, request: Any) -> Any:
+        def _inject_skill_body(self, request: Any) -> Any:
             if self._registry is None:
                 return request
-            existing = request.system_message
-            existing_text = existing.text if existing is not None else ""
-
-            # Always inject metadata summary for intent recognition
-            if "## Available Skills (Intent Recognition)" not in existing_text:
-                summary = self._registry.all_metadata_summary()
-                if summary:
-                    existing_text = f"{existing_text}\n\n{summary}" if existing_text else summary
 
             # Check conversation for intent signals to load specific skill
             messages = getattr(request, "messages", None) or []
             target_skill = self._detect_target_skill(messages)
 
-            if target_skill and target_skill != self._loaded_skill:
-                # Unload previous skill context (don't re-inject old body)
-                if self._loaded_skill:
-                    logger.info(
-                        "SkillLifecycle: unloading skill=%s, loading skill=%s",
-                        self._loaded_skill,
-                        target_skill,
-                    )
-                else:
-                    logger.info("SkillLifecycle: loading skill=%s", target_skill)
-                self._loaded_skill = target_skill
-                skill_body = self._registry.load_skill_body(target_skill)
-                if skill_body:
-                    meta = self._registry.get_meta(target_skill)
-                    ref_listing = ""
-                    if meta and meta.references:
-                        ref_lines = ["\n### Available References (use read_file to load)"]
-                        listing = self._registry.virtual_file_listing(target_skill)
-                        for vpath, purpose in sorted(listing.items()):
-                            if "SKILL.md" not in vpath:
-                                ref_lines.append(f"- `{vpath}` — {purpose}")
-                        if len(ref_lines) > 1:
-                            ref_listing = "\n".join(ref_lines)
-                    skill_block = (
-                        f"\n\n## Loaded Skill: {target_skill}\n\n"
-                        f"{skill_body}"
-                        f"{ref_listing}"
-                    )
-                    existing_text = f"{existing_text}{skill_block}"
+            if not target_skill or target_skill == self._loaded_skill:
+                return request
 
-            system_message = SystemMessage(content=existing_text)
+            # Unload previous skill context (don't re-inject old body)
+            if self._loaded_skill:
+                logger.info(
+                    "SkillLifecycle: unloading skill=%s, loading skill=%s",
+                    self._loaded_skill,
+                    target_skill,
+                )
+            else:
+                logger.info("SkillLifecycle: loading skill=%s", target_skill)
+            self._loaded_skill = target_skill
+            skill_body = self._registry.load_skill_body(target_skill)
+            if not skill_body:
+                return request
+
+            meta = self._registry.get_meta(target_skill)
+            ref_listing = ""
+            if meta and meta.references:
+                ref_lines = ["\n### Available References (use read_file to load)"]
+                listing = self._registry.virtual_file_listing(target_skill)
+                for vpath, purpose in sorted(listing.items()):
+                    if "SKILL.md" not in vpath:
+                        ref_lines.append(f"- `{vpath}` — {purpose}")
+                if len(ref_lines) > 1:
+                    ref_listing = "\n".join(ref_lines)
+            skill_block = (
+                f"\n\n## Loaded Skill: {target_skill}\n\n"
+                f"{skill_body}"
+                f"{ref_listing}"
+            )
+
+            existing = request.system_message
+            existing_text = existing.text if existing is not None else ""
+            system_message = SystemMessage(
+                content=f"{existing_text}{skill_block}" if existing_text else skill_block.strip()
+            )
             return request.override(system_message=system_message)
 
         def _detect_target_skill(self, messages: list[Any]) -> str | None:

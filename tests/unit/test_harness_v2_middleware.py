@@ -164,7 +164,11 @@ class TestCompletionGate:
 
 
 class TestSkillLifecycleMiddleware:
-    def test_injects_metadata_summary(self, skill_tree):
+    def test_no_op_without_intent_signal(self, skill_tree):
+        """Without an intent_code signal, middleware does not modify the request.
+
+        Skill name/description injection is handled by deepagent SDK natively.
+        """
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware(skill_registry=registry)
@@ -174,21 +178,13 @@ class TestSkillLifecycleMiddleware:
         request.system_message = FakeSystemMessage(content="You are a helpful assistant.")
         request.messages = []
 
-        captured_request = None
-        def capture_handler(req):
-            nonlocal captured_request
-            captured_request = req
-            return "response"
+        handler = MagicMock(return_value="response")
+        lifecycle.wrap_model_call(request, handler)
 
-        request.override.return_value = request
-        lifecycle.wrap_model_call(request, capture_handler)
-
-        # The override should have been called with a system_message containing skill metadata
-        call_args = request.override.call_args
-        assert call_args is not None
-        sm = call_args[1].get("system_message") or call_args[0][0] if call_args[0] else None
-        if sm:
-            assert "Available Skills" in sm.content or "transfer-routing" in sm.content
+        # No override should be called — no intent signal in messages
+        request.override.assert_not_called()
+        # Handler should be called with the original request
+        handler.assert_called_once_with(request)
 
     def test_detects_intent_from_ai_message(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])

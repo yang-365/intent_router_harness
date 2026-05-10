@@ -113,8 +113,9 @@ def build_agent(
         tools=[workflow_tool],
         system_prompt=system_prompt,
         middleware=harness_mw,
-        # Skills are managed by SkillLifecycleMiddleware, not deepagent native
-        skills=None,
+        # deepagent natively loads skill name/description for intent recognition;
+        # SkillLifecycleMiddleware handles progressive body loading/unloading.
+        skills=config.skill_sources if config.skill_sources else None,
         memory=config.memory_sources if config.memory_sources else None,
         backend=backend,
         checkpointer=MemorySaver(),
