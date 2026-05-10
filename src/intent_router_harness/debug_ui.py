@@ -695,7 +695,10 @@ _VALIDATOR_HTML = """<!doctype html>
         txt: text,
         custID,
         config_variables: [
+          { name: "custID", value: custID },
+          { name: "sessionID", value: sessionId },
           { name: "currentDisplay", value: "validator_page" },
+          { name: "agentSessionID", value: sessionId },
         ],
         executionMode: els.executionMode.value,
         stream: true,

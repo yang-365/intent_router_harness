@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 import logging
 from pathlib import Path
@@ -17,6 +18,11 @@ from intent_router_harness.contracts import (
     RouterMessageRequest,
     TaskCompletionRequest,
 )
+from intent_router_harness.deepagent_service import (
+    DeepAgentRunner,
+    DeepAgentAssistantProtocolService,
+    NativeDeepAgentRunner,
+)
 from intent_router_harness.llm import LLMClient, LLMRequestError
 from intent_router_harness.planner import LLMMessagePlanner, MessagePlanner
 from intent_router_harness.regression import (
@@ -27,6 +33,7 @@ from intent_router_harness.regression import (
     validate_step_transcript,
 )
 from intent_router_harness.runtime import PromptHarness, load_prompt_harness
+from intent_router_harness.session_store import InMemorySessionStore
 from intent_router_harness.tool_runtime import load_command_tools
 from intent_router_harness.workflow import WorkflowToolClient, load_workflow_tool_specs
 from intent_router_harness.workflow_hooks import load_workflow_hooks
@@ -95,11 +102,16 @@ class IntentRouterHarnessService:
         llm_client: LLMClient | None = None,
         message_planner: MessagePlanner | None = None,
         workflow_client: WorkflowToolClient | None = None,
+        deepagent_runner: DeepAgentRunner | None = None,
+        session_store: InMemorySessionStore | None = None,
     ) -> None:
         self.harness = harness
         self.regression_suite = regression_suite
         self.llm_client = llm_client
         self.workflow_client = workflow_client
+        resolved_session_store = session_store or InMemorySessionStore(
+            idle_timeout=timedelta(seconds=harness.spec.session.idle_timeout_seconds)
+        )
         workflow_hooks = load_workflow_hooks(list(harness.hook_roots))
         command_tools = load_command_tools(list(harness.tool_roots))
         if workflow_client is not None and hasattr(workflow_client, "tool"):
@@ -111,16 +123,29 @@ class IntentRouterHarnessService:
         planner = message_planner
         if planner is None and llm_client is not None:
             planner = LLMMessagePlanner(harness=harness, llm_client=llm_client)
-        self.assistant = (
-            AssistantProtocolService(
-                planner=planner,
-                workflow_client=workflow_client,
-                workflow_tools=workflow_tools,
+        if harness.spec.agent_runtime == "deepagent":
+            runner = deepagent_runner or NativeDeepAgentRunner(
+                harness=harness,
+                workflow_tool=command_tools.get("workflow-api-call"),
                 workflow_hooks=workflow_hooks,
             )
-            if planner is not None
-            else None
-        )
+            self.assistant = DeepAgentAssistantProtocolService(
+                harness=harness,
+                runner=runner,
+                sessions=resolved_session_store,
+            )
+        else:
+            self.assistant = (
+                AssistantProtocolService(
+                    planner=planner,
+                    sessions=resolved_session_store,
+                    workflow_client=workflow_client,
+                    workflow_tools=workflow_tools,
+                    workflow_hooks=workflow_hooks,
+                )
+                if planner is not None
+                else None
+            )
 
     @classmethod
     def from_spec(
@@ -132,6 +157,8 @@ class IntentRouterHarnessService:
         llm_client: LLMClient | None = None,
         message_planner: MessagePlanner | None = None,
         workflow_client: WorkflowToolClient | None = None,
+        deepagent_runner: DeepAgentRunner | None = None,
+        session_store: InMemorySessionStore | None = None,
     ) -> "IntentRouterHarnessService":
         """Load a service from a harness spec file."""
         logger.info(
@@ -163,12 +190,15 @@ class IntentRouterHarnessService:
             llm_client=llm_client,
             message_planner=message_planner,
             workflow_client=workflow_client,
+            deepagent_runner=deepagent_runner,
+            session_store=session_store,
         )
         logger.info(
-            "initialized harness service name=%s version=%s llm_configured=%s assistant_configured=%s regression_suite_loaded=%s",
+            "initialized harness service name=%s version=%s llm_configured=%s agent_runtime=%s assistant_configured=%s regression_suite_loaded=%s",
             service.harness.spec.name,
             service.harness.spec.version,
             service.llm_client is not None,
+            service.harness.spec.agent_runtime,
             service.assistant is not None,
             service.regression_suite is not None,
         )

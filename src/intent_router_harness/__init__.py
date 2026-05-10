@@ -5,11 +5,20 @@ from intent_router_harness.runtime import (
     load_prompt_harness,
 )
 from intent_router_harness.schema import (
+    DeepAgentConfig,
     EvalCase,
     ExperimentSpec,
     HarnessSpec,
     SkillBinding,
     Variant,
+)
+from intent_router_harness.deepagent_service import (
+    DeepAgentAssistantProtocolService,
+    DeepAgentRunContext,
+    DeepAgentRunResult,
+    DeepAgentRunner,
+    NativeDeepAgentRunner,
+    SessionRunLockStore,
 )
 from intent_router_harness.contracts import (
     AssistantProtocolFrame,
@@ -33,6 +42,7 @@ from intent_router_harness.service import (
     ServiceConfigurationError,
 )
 from intent_router_harness.skills import SkillDocument, SkillLibrary, load_skill_document
+from intent_router_harness.session_store import InMemorySessionStore
 from intent_router_harness.workflow import (
     HTTPWorkflowToolClient,
     WorkflowHTTPRequest,
@@ -59,10 +69,16 @@ from intent_router_harness.regression import (
 
 __all__ = [
     "EvalCase",
+    "DeepAgentAssistantProtocolService",
+    "DeepAgentConfig",
+    "DeepAgentRunContext",
+    "DeepAgentRunResult",
+    "DeepAgentRunner",
     "ExperimentSpec",
     "HarnessHealth",
     "HarnessSpec",
     "HTTPWorkflowToolClient",
+    "InMemorySessionStore",
     "IntentRouterHarnessService",
     "AssistantProtocolFrame",
     "AssistantServiceResult",
@@ -70,6 +86,7 @@ __all__ = [
     "PlannedTask",
     "PlannerOutput",
     "PromptHarness",
+    "NativeDeepAgentRunner",
     "RegressionCase",
     "RegressionCaseSummary",
     "RegressionExpectation",
@@ -82,6 +99,7 @@ __all__ = [
     "ServiceConfigurationError",
     "RouterMessageRequest",
     "SessionState",
+    "SessionRunLockStore",
     "SkillBinding",
     "SkillDocument",
     "SkillLibrary",

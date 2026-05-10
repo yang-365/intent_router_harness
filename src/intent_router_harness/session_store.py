@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from threading import RLock
 
 from intent_router_harness.contracts import SessionState, TaskRuntimeState
 
@@ -39,76 +40,79 @@ class InMemorySessionStore:
         self._task_states: dict[str, TaskRuntimeState] = {}
         self.idle_timeout = idle_timeout
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._lock = RLock()
 
     def load(self, session_id: str, *, user_binding_id: str | None = None) -> SessionLoadResult:
         """Return a session snapshot and enforce ownership/idle expiration."""
-        now = self._now()
-        session = self._sessions.get(session_id)
-        expired = session is not None and self._is_expired(session, now)
-        if expired:
-            self._sessions.pop(session_id, None)
-            self._task_states.pop(session_id, None)
-            session = None
+        with self._lock:
+            now = self._now()
+            session = self._sessions.get(session_id)
+            expired = session is not None and self._is_expired(session, now)
+            if expired:
+                self._sessions.pop(session_id, None)
+                self._task_states.pop(session_id, None)
+                session = None
 
-        user_bound = False
-        created = False
-        if session is None:
-            session = SessionState(
-                session_id=session_id,
-                user_binding_id=user_binding_id,
-                created_at=now,
-                last_active_at=now,
-                expires_at=now + self.idle_timeout,
+            user_bound = False
+            created = False
+            if session is None:
+                session = SessionState(
+                    session_id=session_id,
+                    user_binding_id=user_binding_id,
+                    created_at=now,
+                    last_active_at=now,
+                    expires_at=now + self.idle_timeout,
+                )
+                user_bound = user_binding_id is not None
+                created = True
+            else:
+                if user_binding_id and session.user_binding_id and session.user_binding_id != user_binding_id:
+                    raise SessionOwnershipError(
+                        f"session_id {session_id!r} is already bound to another user identifier"
+                    )
+                if user_binding_id and not session.user_binding_id:
+                    session = session.model_copy(update={"user_binding_id": user_binding_id}, deep=True)
+                    user_bound = True
+                session = self._refresh(session, now)
+
+            task_state = self._task_states.get(session_id, TaskRuntimeState())
+            self._sessions[session_id] = session.model_copy(deep=True)
+            self._task_states[session_id] = task_state.model_copy(deep=True)
+            return SessionLoadResult(
+                session=session.model_copy(deep=True),
+                task_state=task_state.model_copy(deep=True),
+                expired=expired,
+                user_bound=user_bound,
+                created=created,
             )
-            user_bound = user_binding_id is not None
-            created = True
-        else:
+
+    def load_existing(self, session_id: str, *, user_binding_id: str | None = None) -> SessionLoadResult:
+        """Return an existing session snapshot without creating a new session."""
+        with self._lock:
+            now = self._now()
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise SessionNotFoundError(f"session_id {session_id!r} does not exist")
+            if self._is_expired(session, now):
+                self._sessions.pop(session_id, None)
+                self._task_states.pop(session_id, None)
+                raise SessionNotFoundError(f"session_id {session_id!r} has expired")
             if user_binding_id and session.user_binding_id and session.user_binding_id != user_binding_id:
                 raise SessionOwnershipError(
                     f"session_id {session_id!r} is already bound to another user identifier"
                 )
             if user_binding_id and not session.user_binding_id:
                 session = session.model_copy(update={"user_binding_id": user_binding_id}, deep=True)
-                user_bound = True
             session = self._refresh(session, now)
-
-        task_state = self._task_states.get(session_id, TaskRuntimeState())
-        self._sessions[session_id] = session.model_copy(deep=True)
-        self._task_states[session_id] = task_state.model_copy(deep=True)
-        return SessionLoadResult(
-            session=session.model_copy(deep=True),
-            task_state=task_state.model_copy(deep=True),
-            expired=expired,
-            user_bound=user_bound,
-            created=created,
-        )
-
-    def load_existing(self, session_id: str, *, user_binding_id: str | None = None) -> SessionLoadResult:
-        """Return an existing session snapshot without creating a new session."""
-        now = self._now()
-        session = self._sessions.get(session_id)
-        if session is None:
-            raise SessionNotFoundError(f"session_id {session_id!r} does not exist")
-        if self._is_expired(session, now):
-            self._sessions.pop(session_id, None)
-            self._task_states.pop(session_id, None)
-            raise SessionNotFoundError(f"session_id {session_id!r} has expired")
-        if user_binding_id and session.user_binding_id and session.user_binding_id != user_binding_id:
-            raise SessionOwnershipError(
-                f"session_id {session_id!r} is already bound to another user identifier"
+            task_state = self._task_states.get(session_id, TaskRuntimeState())
+            self._sessions[session_id] = session.model_copy(deep=True)
+            self._task_states[session_id] = task_state.model_copy(deep=True)
+            return SessionLoadResult(
+                session=session.model_copy(deep=True),
+                task_state=task_state.model_copy(deep=True),
+                user_bound=False,
+                created=False,
             )
-        if user_binding_id and not session.user_binding_id:
-            session = session.model_copy(update={"user_binding_id": user_binding_id}, deep=True)
-        session = self._refresh(session, now)
-        task_state = self._task_states.get(session_id, TaskRuntimeState())
-        self._sessions[session_id] = session.model_copy(deep=True)
-        self._task_states[session_id] = task_state.model_copy(deep=True)
-        return SessionLoadResult(
-            session=session.model_copy(deep=True),
-            task_state=task_state.model_copy(deep=True),
-            user_bound=False,
-            created=False,
-        )
 
     def get_or_create(self, session_id: str) -> SessionState:
         """Return an existing session lifecycle record or create one."""
@@ -120,22 +124,24 @@ class InMemorySessionStore:
 
     def save(self, session: SessionState) -> None:
         """Persist a session lifecycle snapshot."""
-        now = self._now()
-        self._sessions[session.session_id] = self._refresh(session, now).model_copy(deep=True)
+        with self._lock:
+            now = self._now()
+            self._sessions[session.session_id] = self._refresh(session, now).model_copy(deep=True)
 
     def save_task_state(self, session_id: str, task_state: TaskRuntimeState) -> None:
         """Persist task runtime state and refresh the session idle timer."""
-        now = self._now()
-        session = self._sessions.get(session_id)
-        if session is None:
-            session = SessionState(
-                session_id=session_id,
-                created_at=now,
-                last_active_at=now,
-                expires_at=now + self.idle_timeout,
-            )
-        self._sessions[session_id] = self._refresh(session, now).model_copy(deep=True)
-        self._task_states[session_id] = task_state.model_copy(deep=True)
+        with self._lock:
+            now = self._now()
+            session = self._sessions.get(session_id)
+            if session is None:
+                session = SessionState(
+                    session_id=session_id,
+                    created_at=now,
+                    last_active_at=now,
+                    expires_at=now + self.idle_timeout,
+                )
+            self._sessions[session_id] = self._refresh(session, now).model_copy(deep=True)
+            self._task_states[session_id] = task_state.model_copy(deep=True)
 
     def _refresh(self, session: SessionState, now: datetime) -> SessionState:
         return session.model_copy(

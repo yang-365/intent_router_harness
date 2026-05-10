@@ -52,10 +52,11 @@ def load_prompt_harness(
     logger.info("loading harness spec path=%s", resolved_spec_path)
     spec = load_harness_spec(resolved_spec_path)
     logger.info(
-        "loaded harness spec name=%s version=%s enabled=%s agent_paths=%s skill_roots=%s bindings=%d",
+        "loaded harness spec name=%s version=%s enabled=%s agent_runtime=%s agent_paths=%s skill_roots=%s bindings=%d",
         spec.name,
         spec.version,
         spec.enabled,
+        spec.agent_runtime,
         list(spec.agent_paths or ["agent.md"]),
         list(spec.skill_roots),
         len(spec.bindings),
