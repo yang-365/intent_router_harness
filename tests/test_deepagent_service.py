@@ -200,6 +200,13 @@ def _write_deepagent_harness(tmp_path: Path) -> Path:
                 f'skill_roots = ["{skills_root.as_posix()}"]',
                 "[deepagent]",
                 'model = "fake:model"',
+                "",
+                "[workflow]",
+                "allowed_urls = [",
+                '  "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",',
+                '  "http://127.0.0.1:9876/agent-api/workflow-agent-payee/chatabc/use_as_tool",',
+                '  "http://127.0.0.1:9876/agent-api/workflow-agent-bill/chatabc/use_as_tool",',
+                "]",
             ]
         )
         + "\n",
@@ -775,7 +782,7 @@ def test_workflow_tool_error_uses_workflow_error_code(tmp_path: Path) -> None:
             {"session_id": "s1"},
         )
 
-    assert exc_info.value.code == "workflow_error"
+    assert exc_info.value.code == "workflow_sse_parse_error"
 
 
 def test_loads_json_object_extracts_markdown_json_fence() -> None:
@@ -842,3 +849,418 @@ def test_deepagent_system_prompt_enforces_native_multi_task_planning(tmp_path: P
     assert "task_list" in prompt
     assert "current_task" in prompt
     assert "不要并行触发多个资金类 workflow_api_call" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Priority 2: Workflow error classification tests
+# ---------------------------------------------------------------------------
+
+def test_workflow_url_not_in_whitelist_raises_specific_error(tmp_path: Path) -> None:
+    from intent_router_harness.deepagent_service import WorkflowUrlNotAllowedError
+
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=FakeWorkflowCommandTool("event:done\ndata:[DONE]\n"),
+    )
+
+    with pytest.raises(WorkflowUrlNotAllowedError) as exc_info:
+        runner._workflow_api_call(
+            "POST",
+            "http://evil.example.com/api",
+            {"session_id": "s1"},
+        )
+
+    assert exc_info.value.code == "workflow_url_not_allowed"
+    assert "evil.example.com" in str(exc_info.value)
+
+
+def test_workflow_sse_parse_error_uses_specific_code(tmp_path: Path) -> None:
+    from intent_router_harness.deepagent_service import WorkflowSseParseError
+
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=FakeWorkflowCommandTool(
+            "event:message\ndata:not-json\n\nevent:done\ndata:[DONE]\n"
+        ),
+    )
+
+    with pytest.raises(WorkflowApiCallError) as exc_info:
+        runner._workflow_api_call(
+            "POST",
+            "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+            {"session_id": "s1"},
+        )
+
+    assert exc_info.value.code == "workflow_sse_parse_error"
+
+
+def test_workflow_no_node_output_uses_specific_code(tmp_path: Path) -> None:
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+    sse_text = "\n".join([
+        "event:message",
+        'data:{"additional_kwargs":{"node_id":"n1","node_title":"test"}}',
+        "",
+        "event:done",
+        "data:[DONE]",
+        "",
+    ])
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=FakeWorkflowCommandTool(sse_text),
+    )
+
+    with pytest.raises(WorkflowApiCallError) as exc_info:
+        runner._workflow_api_call(
+            "POST",
+            "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+            {"session_id": "s1"},
+        )
+
+    assert exc_info.value.code == "workflow_no_node_output"
+
+
+def test_workflow_tool_runtime_error_uses_tool_error_code(tmp_path: Path) -> None:
+    from intent_router_harness.tool_runtime import ToolRuntimeError
+
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+
+    class FailingTool:
+        def run(self, payload: dict, *, timeout_seconds: float = 60.0) -> dict:
+            raise ToolRuntimeError("tool process exited 1")
+
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=FailingTool(),
+    )
+
+    with pytest.raises(WorkflowApiCallError) as exc_info:
+        runner._workflow_api_call(
+            "POST",
+            "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+            {"session_id": "s1"},
+        )
+
+    assert exc_info.value.code == "workflow_tool_error"
+
+
+def test_workflow_timeout_error_uses_timeout_code(tmp_path: Path) -> None:
+    from intent_router_harness.tool_runtime import ToolRuntimeError
+
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+
+    class TimeoutTool:
+        def run(self, payload: dict, *, timeout_seconds: float = 60.0) -> dict:
+            raise ToolRuntimeError("tool 'workflow-api-call' timed out after 60.0s")
+
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=TimeoutTool(),
+    )
+
+    with pytest.raises(WorkflowApiCallError) as exc_info:
+        runner._workflow_api_call(
+            "POST",
+            "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+            {"session_id": "s1"},
+        )
+
+    assert exc_info.value.code == "workflow_timeout"
+
+
+def test_after_workflow_hook_error_is_nonfatal(tmp_path: Path) -> None:
+    """after_workflow_tool_call hook failure should not prevent result capture."""
+    from intent_router_harness.workflow_hooks import WorkflowHook
+
+    sse_text = "\n".join([
+        "event:message",
+        'data:{"additional_kwargs":{"node_id":"end","node_title":"done","node_output":{"output":"ok"}}}',
+        "",
+        "event:done",
+        "data:[DONE]",
+        "",
+    ])
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+    bad_hook = WorkflowHook(
+        name="failing-after-hook",
+        events=("after_workflow_tool_call",),
+        command=("false",),
+        cwd=tmp_path,
+    )
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=FakeWorkflowCommandTool(sse_text),
+        workflow_hooks=(bad_hook,),
+    )
+
+    result = runner._workflow_api_call(
+        "POST",
+        "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+        {"session_id": "s1"},
+    )
+
+    assert result["final_output"] == {"output": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Priority 5: Concurrency tests
+# ---------------------------------------------------------------------------
+
+def test_different_sessions_can_run_concurrently(tmp_path: Path) -> None:
+    """Two different sessions should not block each other."""
+    runner = BlockingDeepAgentRunner()
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=runner,
+    )
+    results: list[object] = []
+
+    def run_session_a() -> None:
+        results.append(
+            service.handle_message(RouterMessageRequest(sessionId="sA", custID="C0001", txt="hi from A"))
+        )
+
+    thread_a = Thread(target=run_session_a)
+    thread_a.start()
+    try:
+        assert runner.started.wait(timeout=5)
+
+        result_b = service.handle_message(
+            RouterMessageRequest(sessionId="sB", custID="C0002", txt="hi from B")
+        )
+
+        assert result_b.final_frame.status == "completed"
+    finally:
+        runner.release.set()
+        thread_a.join(timeout=5)
+
+    assert results
+
+
+def test_same_session_concurrent_rejection_returns_stable_error(tmp_path: Path) -> None:
+    """Same (custID, sessionId) pair submitted concurrently returns a well-typed error."""
+    runner = BlockingDeepAgentRunner()
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=runner,
+    )
+
+    def run_first() -> None:
+        service.handle_message(RouterMessageRequest(sessionId="s1", custID="C0001", txt="first"))
+
+    thread = Thread(target=run_first)
+    thread.start()
+    try:
+        assert runner.started.wait(timeout=5)
+
+        second = service.handle_message(RouterMessageRequest(sessionId="s1", custID="C0001", txt="second"))
+
+        assert second.final_frame.ok is False
+        assert second.final_frame.status == "failed"
+        assert second.final_frame.errorCode == "session_run_in_progress"
+        error = second.final_frame.output.get("error", {})
+        assert error.get("code") == "session_run_in_progress"
+    finally:
+        runner.release.set()
+        thread.join(timeout=5)
+
+
+def test_session_run_lock_allows_different_sessions_at_same_time() -> None:
+    locks = SessionRunLockStore()
+
+    with locks.acquire(user_id="C0001", session_id="s1"):
+        with locks.acquire(user_id="C0002", session_id="s2"):
+            pass
+
+
+def test_session_run_lock_allows_reuse_after_release() -> None:
+    locks = SessionRunLockStore()
+
+    with locks.acquire(user_id="C0001", session_id="s1"):
+        pass
+
+    with locks.acquire(user_id="C0001", session_id="s1"):
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Priority 4: Context isolation tests
+# ---------------------------------------------------------------------------
+
+def test_different_sessions_have_isolated_task_state(tmp_path: Path) -> None:
+    """Each session must have independent task state and slot memory."""
+    runner = FakeDeepAgentRunner()
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=runner,
+    )
+
+    service.handle_message(
+        RouterMessageRequest(sessionId="s1", custID="C0001", txt="给陈广荣转500元", executionMode="execute")
+    )
+    service.handle_message(
+        RouterMessageRequest(sessionId="s2", custID="C0002", txt="给张三转100元", executionMode="execute")
+    )
+
+    assert runner.contexts[0].thread_id == "C0001:s1"
+    assert runner.contexts[1].thread_id == "C0002:s2"
+    assert runner.contexts[0].request.custID == "C0001"
+    assert runner.contexts[1].request.custID == "C0002"
+
+
+def test_same_session_preserves_task_state_across_turns(tmp_path: Path) -> None:
+    """Repeated messages within the same session should share task state."""
+
+    class StatefulRunner:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def run_message(self, context: DeepAgentRunContext) -> DeepAgentRunResult:
+            self.call_count += 1
+            return DeepAgentRunResult(
+                frames=(
+                    AssistantProtocolFrame(
+                        ok=True,
+                        status="completed",
+                        completion_state=2,
+                        completion_reason="deepagent_done",
+                        output={"turn": self.call_count},
+                    ),
+                ),
+                task_state=TaskRuntimeState(
+                    slot_memory={"accumulated": self.call_count},
+                ),
+            )
+
+    runner = StatefulRunner()
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=runner,
+    )
+
+    service.handle_message(RouterMessageRequest(sessionId="s1", custID="C0001", txt="turn 1"))
+    service.handle_message(RouterMessageRequest(sessionId="s1", custID="C0001", txt="turn 2"))
+
+    assert runner.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: Multi-intent task planning protocol output
+# ---------------------------------------------------------------------------
+
+def test_multi_task_result_preserves_task_list_in_workflow_frames(tmp_path: Path) -> None:
+    """When DeepAgent returns a multi-task plan, workflow frames carry full task_list."""
+    sse_text = "\n".join([
+        "event:message",
+        'data:{"additional_kwargs":{"node_id":"end","node_output":{"output":"mock-done"}}}',
+        "",
+        "event:done",
+        "data:[DONE]",
+        "",
+    ])
+    service = IntentRouterHarnessService.from_spec(
+        _write_deepagent_harness(tmp_path),
+        deepagent_runner=FakeDeepAgentRunner(),
+    )
+    runner = NativeDeepAgentRunner(
+        harness=service.harness,
+        workflow_tool=FakeWorkflowCommandTool(sse_text),
+    )
+    runner._workflow_api_call(
+        "POST",
+        "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+        {
+            "session_id": "s1",
+            "config_variables": [
+                {"name": "sessionID", "value": "s1"},
+                {"name": "slots_data", "value": '{"payee_name":"陈广荣","amount":"500"}'},
+            ],
+        },
+    )
+    workflow_call = runner._pop_workflow_call("s1")
+    assert workflow_call is not None
+
+    task_a = PlannedTask(taskId="t1", intent_code="AG_TRANS", status="ready_for_dispatch", title="转账")
+    task_b = PlannedTask(taskId="t2", intent_code="AG_BILL", status="waiting_user_input", title="缴费")
+
+    result = _result_with_workflow_call(
+        DeepAgentRunContext(
+            request=RouterMessageRequest(sessionId="s1", custID="C0001", txt="转账再缴费"),
+            task_state=TaskRuntimeState(task_list=[task_a, task_b], current_task=task_a),
+            thread_id="C0001:s1",
+            agent_context="",
+            skills={},
+            references={},
+            workflow_allowed_urls=(),
+            config_variables={},
+        ),
+        workflow_call=workflow_call,
+        parsed_result=DeepAgentRunResult(
+            frames=(
+                AssistantProtocolFrame(
+                    ok=True,
+                    status="waiting_assistant_completion",
+                    intent_code="AG_TRANS",
+                    completion_state=1,
+                    completion_reason="router_ready_for_dispatch",
+                    task_list=[
+                        task_a.model_dump(mode="json"),
+                        task_b.model_dump(mode="json"),
+                    ],
+                    current_task=task_a.model_dump(mode="json"),
+                ),
+            ),
+            task_state=TaskRuntimeState(task_list=[task_a, task_b], current_task=task_a),
+        ),
+    )
+
+    for frame in result.frames:
+        assert len(frame.task_list) == 2, "every frame must carry full task_list"
+        task_ids = [t["taskId"] for t in frame.task_list]
+        assert task_ids == ["t1", "t2"]
+
+    assert result.frames[-1].current_task["status"] == "completed"
+    assert result.task_state is not None
+    assert [t.taskId for t in result.task_state.task_list] == ["t2"]
+    assert result.task_state.current_task.taskId == "t2"
+
+
+def test_user_payload_includes_multi_task_contract() -> None:
+    """The model user payload must tell the model about multi-task protocol."""
+    context = DeepAgentRunContext(
+        request=RouterMessageRequest(sessionId="s1", custID="C0001", txt="hi"),
+        task_state=TaskRuntimeState(),
+        thread_id="C0001:s1",
+        agent_context="",
+        skills={},
+        references={},
+        workflow_allowed_urls=(),
+        config_variables={},
+    )
+
+    payload = json.loads(_deepagent_user_payload(context))
+
+    assert "assistant_protocol_contract" in payload
+    contract = payload["assistant_protocol_contract"]
+    assert "multi_task" in contract
+    assert "task_list" in contract["multi_task"]
+    assert "current_task" in contract["multi_task"]
