@@ -110,6 +110,11 @@ def build_agent(
     backend: Any
     if config.backend == "filesystem" and config.backend_root:
         backend = FilesystemBackend(root_dir=config.backend_root)
+    elif config.project_root:
+        # Auto-use FilesystemBackend when project root is detected so that
+        # deepagent's SkillsMiddleware can read SKILL.md files from disk.
+        backend = FilesystemBackend(root_dir=config.project_root)
+        logger.info("using FilesystemBackend root=%s", config.project_root)
     else:
         backend = StateBackend()
 

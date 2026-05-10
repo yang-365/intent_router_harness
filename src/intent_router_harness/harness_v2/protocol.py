@@ -116,3 +116,13 @@ def emit_trace(stage: str, title: str, summary: str = "", **data: Any) -> None:
     if buf is None:
         return
     buf.append(TraceEvent(stage=stage, title=title, summary=summary, data=data))
+
+
+def emit_trace_once(stage: str, title: str, summary: str = "", **data: Any) -> None:
+    """Like emit_trace but skips if the same *stage* was already emitted this request."""
+    buf = _trace_var.get(None)
+    if buf is None:
+        return
+    if any(e.stage == stage for e in buf):
+        return
+    buf.append(TraceEvent(stage=stage, title=title, summary=summary, data=data))

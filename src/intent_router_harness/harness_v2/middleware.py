@@ -19,7 +19,7 @@ import json
 import logging
 from typing import Any
 
-from intent_router_harness.harness_v2.protocol import emit_trace
+from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_once
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def build_harness_middleware(
                 "- 当前任务未完成前，不要开始下一个任务\n"
                 "- workflow_api_call 完成后，将状态设为 waiting_assistant_completion，等待前端确认\n"
             )
-            emit_trace(
+            emit_trace_once(
                 "task_constraints_injected",
                 "任务执行约束注入",
                 "串行执行、缺槽追问、前端确认完成",
@@ -143,7 +143,7 @@ def build_harness_middleware(
                 )
             sections.append("请结合以上前端上下文进行意图识别和任务规划。")
 
-            emit_trace(
+            emit_trace_once(
                 "frontend_context_injected",
                 "前端上下文注入",
                 f"recommendTask={len(recommend_task)}项, currentDisplay={len(current_display)}项",

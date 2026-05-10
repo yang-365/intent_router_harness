@@ -34,6 +34,9 @@ class HarnessConfig:
     backend: str = "state"
     backend_root: str | None = None
 
+    # Project root (auto-resolved from spec file location)
+    project_root: str | None = None
+
     # Paths resolved relative to spec file
     agent_paths: list[str] = field(default_factory=list)
     skill_roots: list[str] = field(default_factory=list)
@@ -56,6 +59,24 @@ def load_config(spec_path: str | Path) -> HarnessConfig:
     workflow = raw.get("workflow", {})
     session = raw.get("session", {})
 
+    # Resolve project root: walk up from spec file to find the directory
+    # that contains the skills/ directory (typically repo root).
+    backend_cfg = raw.get("backend", {})
+    backend_type = backend_cfg.get("type", "auto")
+    backend_root_cfg = backend_cfg.get("root")
+
+    project_root: str | None = None
+    if backend_root_cfg:
+        project_root = str((base_dir / backend_root_cfg).resolve())
+    else:
+        # Auto-detect: walk up from spec file to find repo root
+        candidate = base_dir.resolve()
+        for _ in range(5):
+            if (candidate / "skills").is_dir() or (candidate / ".git").is_dir():
+                project_root = str(candidate)
+                break
+            candidate = candidate.parent
+
     return HarnessConfig(
         name=raw.get("name", "intent-router-harness"),
         version=raw.get("version", "0.1.0"),
@@ -67,6 +88,9 @@ def load_config(spec_path: str | Path) -> HarnessConfig:
         max_iterations=deepagent.get("max_iterations", 20),
         workflow_allowed_urls=workflow.get("allowed_urls", []),
         session_idle_timeout_seconds=session.get("idle_timeout_seconds", 1800),
+        backend=backend_type,
+        backend_root=backend_root_cfg,
+        project_root=project_root,
         agent_paths=agent_paths,
         skill_roots=[str((base_dir / p).resolve()) for p in raw.get("skill_roots", [])],
         hook_roots=[str((base_dir / p).resolve()) for p in raw.get("hook_roots", [])],
