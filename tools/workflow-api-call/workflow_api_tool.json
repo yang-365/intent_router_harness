@@ -1,6 +1,0 @@
-{
-  "name": "workflow-api-call",
-  "description": "Execute workflow use_as_tool HTTP requests and return raw SSE text.",
-  "entrypoint": "execute_workflow_api.py",
-  "timeout_env": "ROUTER_WORKFLOW_TIMEOUT_SECONDS"
-}

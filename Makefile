@@ -1,4 +1,4 @@
-.PHONY: install test lint format serve serve-asgi mock-workflow e2e clean help
+.PHONY: install test lint format serve mock-workflow e2e clean help
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -25,20 +25,14 @@ format: ## Run ruff formatter
 format-check: ## Check formatting without changing files
 	python -m ruff format --check src/ tests/
 
-serve: ## Start the stdlib HTTP server (PORT=8765)
-	intent-router-harness serve examples/deepagent-finance-router-harness.toml --port $${PORT:-8765}
-
-serve-asgi: ## Start the ASGI server (PORT=8765)
-	intent-router-harness serve-asgi --host 0.0.0.0 --port $${PORT:-8765}
+serve: ## Start the ASGI server (PORT=8765)
+	python -m intent_router_harness serve examples/deepagent-finance-router-harness.toml --port $${PORT:-8765}
 
 mock-workflow: ## Start the mock workflow server (PORT=9876)
 	python examples/mock_workflow_server.py --host 127.0.0.1 --port $${PORT:-9876}
 
 e2e: ## Run end-to-end validation (requires running server + mock-workflow)
 	python examples/deepagent_e2e_check.py --url http://127.0.0.1:$${PORT:-8766}/api/v1/message
-
-show-suite: ## Display the regression suite
-	intent-router-harness show-suite regressions/assistant_protocol_v0_6.json
 
 clean: ## Remove build artifacts and caches
 	rm -rf build/ dist/ *.egg-info src/*.egg-info .pytest_cache __pycache__

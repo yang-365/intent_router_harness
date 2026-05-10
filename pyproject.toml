@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "intent-router-harness"
-version = "0.1.0"
-description = "Standalone spec-driven harness for intent routing experiments."
+version = "2.0.0"
+description = "Enterprise shell over deepagent SDK — multi-user session isolation, progressive skill lifecycle, and protocol-compatible assistant API."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"

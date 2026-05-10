@@ -1,6 +1,0 @@
-{
-  "hooks": [
-    "restrict-api-url-to-allowlist",
-    "forward-workflow-node-output"
-  ]
-}
