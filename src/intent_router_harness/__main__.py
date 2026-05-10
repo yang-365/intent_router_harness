@@ -25,8 +25,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "serve":
+        import os
+
         import uvicorn
 
+        if args.spec:
+            os.environ["HARNESS_SPEC_PATH"] = str(args.spec)
         uvicorn.run(
             "intent_router_harness.harness_v2.api:create_app",
             factory=True,

@@ -57,6 +57,30 @@ completion_state 取值：
 """
 
 
+def _resolve_model(model_spec: str | None) -> Any:
+    """Resolve a model string to a BaseChatModel instance.
+
+    For OpenAI-compatible providers, disables the Responses API which
+    many third-party providers (SiliconFlow, DeepSeek, etc.) do not support.
+
+    Args:
+        model_spec: Model string like ``"openai:model-name"`` or ``None``.
+
+    Returns:
+        A configured ``BaseChatModel`` instance, or the string as-is if
+        no special handling is needed.
+    """
+    if not model_spec:
+        return model_spec
+    try:
+        from langchain.chat_models import init_chat_model
+    except ImportError:
+        return model_spec
+    if model_spec.startswith("openai:"):
+        return init_chat_model(model_spec, use_responses_api=False)
+    return model_spec
+
+
 def build_agent(
     config: HarnessConfig,
     *,
@@ -108,8 +132,10 @@ def build_agent(
 
     workflow_tool = create_workflow_tool()
 
+    resolved_model = _resolve_model(config.model)
+
     agent = create_deep_agent(
-        model=config.model,
+        model=resolved_model,
         tools=[workflow_tool],
         system_prompt=system_prompt,
         middleware=harness_mw,

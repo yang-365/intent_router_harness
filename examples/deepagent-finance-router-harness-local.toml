@@ -1,0 +1,36 @@
+name = "deepagent-finance-router-harness"
+version = "0.1.0"
+description = "DeepAgent-backed finance harness POC."
+agent_runtime = "deepagent"
+agent_paths = ["../agent.md"]
+skill_roots = ["../skills"]
+hook_roots = ["../hooks"]
+tool_roots = ["../tools"]
+max_skill_body_chars = 6000
+max_reference_body_chars = 6000
+max_reference_count = 4
+
+[workflow]
+allowed_urls = [
+  "http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+  "http://127.0.0.1:9877/agent-api/workflow-agent-payee/chatabc/use_as_tool",
+  "http://127.0.0.1:9877/agent-api/workflow-agent-bill/chatabc/use_as_tool",
+]
+
+[session]
+idle_timeout_seconds = 1800
+
+[deepagent]
+# Configure this for native DeepAgent execution after installing the optional extra:
+# .venv/bin/python -m pip install -e '.[test,deepagent]'
+model = "openai:Qwen/Qwen3-Coder-30B-A3B-Instruct"
+max_iterations = 20
+skills = ["/skills/"]
+
+[[bindings]]
+skill = "transfer-routing"
+load = "metadata"
+
+[[bindings]]
+skill = "bill-payment-routing"
+load = "metadata"

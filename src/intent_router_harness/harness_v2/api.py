@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -62,7 +63,8 @@ def create_app(
 ) -> FastAPI:
     """Create the ASGI application with v1-compatible routes."""
     if harness_app is None:
-        resolved_config = config or load_config(spec_path or "examples/deepagent-finance-router-harness.toml")
+        default_spec = os.environ.get("HARNESS_SPEC_PATH", "examples/deepagent-finance-router-harness.toml")
+        resolved_config = config or load_config(spec_path or default_spec)
         harness_app = HarnessApp(resolved_config)
 
     app = FastAPI(title="intent_router_harness", version="2.0.0")
@@ -90,7 +92,9 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return "<h1>intent_router_harness v2</h1><p>POST /api/v1/message</p>"
+        from intent_router_harness.harness_v2.debug_ui import validator_html
+
+        return validator_html()
 
     # ------------------------------------------------------------------
     # /api/v1/message — same wire format
