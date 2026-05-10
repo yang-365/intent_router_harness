@@ -504,6 +504,16 @@ _VALIDATOR_HTML = """<!doctype html>
                 <textarea id="recommendTaskText" placeholder='[{"id":"rec_001","title":"推荐任务","description":"推荐任务描述"}]'></textarea>
               </label>
             </div>
+            <div class="recommend-row">
+              <div class="recommend-tools">
+                <label><input id="useCurrentDisplay" type="checkbox"> 携带页面展示卡片</label>
+                <button id="displayClearBtn" type="button" class="secondary">清空展示</button>
+              </div>
+              <label>
+                currentDisplay JSON
+                <textarea id="currentDisplayText" placeholder='[{"id":"card_001","type":"account_card","title":"我的账户"}]'></textarea>
+              </label>
+            </div>
             <div class="toggle-row" style="margin-top: 12px;">
               <label><input id="debugTrace" type="checkbox" checked> 输出 trace 流</label>
               <label><input id="showDetails" type="checkbox"> 默认展开 JSON</label>
@@ -587,6 +597,9 @@ _VALIDATOR_HTML = """<!doctype html>
       recommendBillBtn: document.getElementById("recommendBillBtn"),
       recommendBothBtn: document.getElementById("recommendBothBtn"),
       recommendClearBtn: document.getElementById("recommendClearBtn"),
+      useCurrentDisplay: document.getElementById("useCurrentDisplay"),
+      currentDisplayText: document.getElementById("currentDisplayText"),
+      displayClearBtn: document.getElementById("displayClearBtn"),
       debugTrace: document.getElementById("debugTrace"),
       showDetails: document.getElementById("showDetails"),
       sendBtn: document.getElementById("sendBtn"),
@@ -708,6 +721,10 @@ _VALIDATOR_HTML = """<!doctype html>
       if (recommendTask !== null) {
         payload.recommendTask = recommendTask;
       }
+      const currentDisplay = readCurrentDisplay();
+      if (currentDisplay !== null) {
+        payload.currentDisplay = currentDisplay;
+      }
       return payload;
     }
 
@@ -739,6 +756,31 @@ _VALIDATOR_HTML = """<!doctype html>
     function clearRecommendTask() {
       els.recommendTaskText.value = "";
       els.useRecommendTask.checked = false;
+    }
+
+    function readCurrentDisplay() {
+      if (!els.useCurrentDisplay.checked) {
+        return null;
+      }
+      const raw = els.currentDisplayText.value.trim();
+      if (!raw) {
+        return [];
+      }
+      try {
+        const value = JSON.parse(raw);
+        if (!Array.isArray(value)) {
+          throw new Error("currentDisplay 必须是数组");
+        }
+        return value;
+      } catch (error) {
+        setStatus("error", error.message || "currentDisplay JSON 无效");
+        throw error;
+      }
+    }
+
+    function clearCurrentDisplay() {
+      els.currentDisplayText.value = "";
+      els.useCurrentDisplay.checked = false;
     }
 
     function buildCompletionPayload() {
@@ -1048,6 +1090,7 @@ _VALIDATOR_HTML = """<!doctype html>
       ]);
     });
     els.recommendClearBtn.addEventListener("click", clearRecommendTask);
+    els.displayClearBtn.addEventListener("click", clearCurrentDisplay);
     els.newSessionBtn.addEventListener("click", () => {
       els.sessionId.value = newSessionId();
       localStorage.setItem("intent_router_validator_session", els.sessionId.value);

@@ -12,7 +12,7 @@ This is a Python 3.11+ package using a `src/` layout. The runtime is exclusively
 | `api.py` | FastAPI app factory — `/api/v1/message`, `/api/v1/task/completion`, health |
 | `config.py` | `HarnessConfig` — TOML spec loading |
 | `errors.py` | Error hierarchy (`HarnessError`, `SessionBusyError`, `WorkflowExecutionError`, etc.) |
-| `middleware.py` | 6 enterprise middleware: TaskProgress, CompletionGate, SkillLifecycle, SkillFile, WorkflowGateway, ProtocolOutput |
+| `middleware.py` | 7 enterprise middleware: TaskProgress, FrontendContext, CompletionGate, SkillLifecycle, SkillFile, WorkflowGateway, ProtocolOutput |
 | `protocol.py` | `AssistantProtocolFrame`, `MessageRequest`, `TaskCompletionRequest`, `TraceEvent` |
 | `session.py` | `SessionManager` — multi-user isolation + concurrency locks |
 | `skill_registry.py` | `SkillRegistry` — filesystem-based skill index, metadata scan, on-demand body loading |
