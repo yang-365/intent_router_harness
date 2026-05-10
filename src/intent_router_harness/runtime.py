@@ -1,3 +1,10 @@
+"""Prompt harness runtime — TOML spec loading and asset resolution.
+
+Phase 2: SkillLibrary has been replaced by harness_v2.SkillRegistry.
+This module now only resolves paths and loads agent contexts.  Skill
+scanning is handled by SkillRegistry at the harness_v2 layer.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,7 +13,6 @@ from pathlib import Path
 import tomllib
 
 from intent_router_harness.schema import HarnessSpec, SkillBinding
-from intent_router_harness.skills import SkillLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -22,21 +28,21 @@ class AgentContext:
 class PromptHarness:
     """Loaded router harness assets.
 
-    This object is intentionally not a prompt renderer. The assistant
-    runtime owns the fixed recognition and slot-filling stages directly.
+    The harness is a thin config object.  Skill indexing and lifecycle
+    management are delegated to ``harness_v2.SkillRegistry``.
     """
 
     def __init__(
         self,
         *,
         spec: HarnessSpec,
-        skills: SkillLibrary,
+        skill_roots: tuple[str, ...] = (),
         agent_contexts: tuple[AgentContext, ...] = (),
         hook_roots: tuple[str, ...] = (),
         tool_roots: tuple[str, ...] = (),
     ) -> None:
         self.spec = spec
-        self.skills = skills
+        self.skill_roots = skill_roots
         self.agent_contexts = agent_contexts
         self.hook_roots = hook_roots
         self.tool_roots = tool_roots
@@ -47,17 +53,23 @@ def load_prompt_harness(
     *,
     skill_roots: list[str] | None = None,
 ) -> PromptHarness | None:
-    """Load harness config, root agent context, and skills."""
+    """Load harness config, root agent context, and resolve skill roots.
+
+    Args:
+        spec_path: Path to TOML harness spec.
+        skill_roots: Additional skill root directories.
+
+    Returns:
+        PromptHarness or None if spec is disabled.
+    """
     resolved_spec_path = Path(spec_path).expanduser()
     logger.info("loading harness spec path=%s", resolved_spec_path)
     spec = load_harness_spec(resolved_spec_path)
     logger.info(
-        "loaded harness spec name=%s version=%s enabled=%s agent_runtime=%s agent_paths=%s skill_roots=%s bindings=%d",
+        "loaded harness spec name=%s version=%s enabled=%s skill_roots=%s bindings=%d",
         spec.name,
         spec.version,
         spec.enabled,
-        spec.agent_runtime,
-        list(spec.agent_paths or ["agent.md"]),
         list(spec.skill_roots),
         len(spec.bindings),
     )
@@ -65,13 +77,13 @@ def load_prompt_harness(
         logger.warning("harness spec disabled path=%s name=%s version=%s", resolved_spec_path, spec.name, spec.version)
         return None
 
-    roots = [
+    resolved_skill_roots = tuple(
         str(_resolve_relative_path(resolved_spec_path.parent, root))
         for root in spec.skill_roots
-    ]
-    roots.extend(str(Path(root).expanduser()) for root in (skill_roots or []))
-    logger.info("resolved harness skill roots path=%s roots=%s", resolved_spec_path, roots)
-    skills = SkillLibrary.from_roots(roots)
+    )
+    extra_roots = tuple(str(Path(root).expanduser()) for root in (skill_roots or []))
+    all_skill_roots = resolved_skill_roots + extra_roots
+
     hook_roots = tuple(
         str(_resolve_relative_path(resolved_spec_path.parent, root))
         for root in spec.hook_roots
@@ -82,16 +94,15 @@ def load_prompt_harness(
     )
     agent_contexts = _load_agent_contexts(resolved_spec_path.parent, spec.agent_paths or ["agent.md"])
     logger.info(
-        "initialized prompt harness name=%s version=%s agent_contexts=%s skill_count=%d skills=%s",
+        "initialized prompt harness name=%s version=%s agent_contexts=%s skill_roots=%s",
         spec.name,
         spec.version,
         [str(context.path) for context in agent_contexts],
-        len(skills),
-        skills.names(),
+        list(all_skill_roots),
     )
     return PromptHarness(
         spec=spec,
-        skills=skills,
+        skill_roots=all_skill_roots,
         agent_contexts=agent_contexts,
         hook_roots=hook_roots,
         tool_roots=tool_roots,

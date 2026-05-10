@@ -7,9 +7,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from intent_router_harness.contracts import PlannedTask, RouterMessageRequest
-from intent_router_harness.llm import load_env_file
-from intent_router_harness.skills import SkillLibrary
-from intent_router_harness.tool_runtime import CommandTool, ToolRuntimeError
 
 class WorkflowToolError(RuntimeError):
     """Raised when a workflow tool call fails or returns an invalid stream."""
@@ -68,7 +65,7 @@ class WorkflowToolClient(Protocol):
 
 def load_workflow_settings(env_file: str | Path = ".env.local") -> WorkflowSettings:
     """Load optional workflow HTTP settings from env and a dotenv file."""
-    file_values = load_env_file(env_file)
+    file_values = _load_env_file(env_file)
 
     def get(name: str) -> str | None:
         return os.getenv(name) or file_values.get(name)
@@ -81,9 +78,8 @@ def load_workflow_settings(env_file: str | Path = ".env.local") -> WorkflowSetti
 class HTTPWorkflowToolClient:
     """Small synchronous SSE client for workflow use_as_tool endpoints."""
 
-    def __init__(self, settings: WorkflowSettings, *, tool: CommandTool | None = None) -> None:
+    def __init__(self, settings: WorkflowSettings) -> None:
         self.settings = settings
-        self.tool = tool
 
     def run_workflow(
         self,
@@ -93,44 +89,7 @@ class HTTPWorkflowToolClient:
     ) -> WorkflowToolResult:
         if request_payload.method != "POST":
             raise WorkflowToolError(f"unsupported workflow method: {request_payload.method}")
-        if self.tool is None:
-            raise WorkflowToolError("workflow-api-call tool is not configured")
-        try:
-            result = self.tool.run(
-                {
-                    "method": request_payload.method,
-                    "url": request_payload.url,
-                    "body": request_payload.body,
-                    "timeout_seconds": self.settings.timeout_seconds,
-                },
-                timeout_seconds=self.settings.timeout_seconds + 5,
-            )
-        except ToolRuntimeError as exc:
-            raise WorkflowToolError(str(exc)) from exc
-        sse_text = str(result.get("text") or "")
-        return parse_workflow_sse(sse_text, require_node_output=True)
-
-
-def load_workflow_tool_specs(
-    skills: SkillLibrary,
-    *,
-    allowed_urls: tuple[str, ...] = (),
-) -> dict[str, WorkflowToolSpec]:
-    """Load workflow tool specs from the global allowlist."""
-    unique_allowed_urls = tuple(dict.fromkeys(_string_list(allowed_urls)))
-    if not unique_allowed_urls:
-        return {}
-    specs: dict[str, WorkflowToolSpec] = {}
-    for skill_name in skills.names():
-        skill = skills.get(skill_name)
-        if skill is None or not skill.intent_codes:
-            continue
-        intent_code = _skill_intent_code(skill_name=skill.name, intent_codes=skill.intent_codes)
-        specs[intent_code] = WorkflowToolSpec(
-            intent_code=intent_code,
-            allowed_urls=unique_allowed_urls,
-        )
-    return specs
+        raise WorkflowToolError("HTTPWorkflowToolClient requires harness_v2 runtime")
 
 
 def is_workflow_tool_reference_body(body: str) -> bool:
@@ -287,4 +246,21 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, list | tuple):
         return [str(item).strip() for item in value if str(item).strip()]
     return [str(value).strip()]
+
+
+def _load_env_file(path: str | Path) -> dict[str, str]:
+    """Parse a simple KEY=VALUE env file, ignoring comments and blanks."""
+    env_path = Path(path).expanduser()
+    if not env_path.is_file():
+        return {}
+    result: dict[str, str] = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        result[key.strip()] = value.strip().strip("'\"")
+    return result
 

@@ -5,7 +5,8 @@ Modules:
     session   — Multi-user session isolation + concurrency locks
     protocol  — AssistantProtocolFrame (same wire format as v1)
     errors    — Error hierarchy
-    middleware — 5 enterprise middleware classes
+    middleware — 6 enterprise middleware classes
+    skill_registry — Filesystem-based skill index with progressive loading
     workflow  — Workflow tool factory + SSE parsing
     agent     — build_agent() via create_deep_agent
     api       — FastAPI routes (/api/v1/message, /api/v1/task/completion)
@@ -28,6 +29,7 @@ from intent_router_harness.harness_v2.protocol import (
     TraceEvent,
 )
 from intent_router_harness.harness_v2.session import SessionManager, SessionMeta
+from intent_router_harness.harness_v2.skill_registry import SkillMeta, SkillRegistry
 
 __all__ = [
     "AssistantProtocolFrame",
@@ -40,6 +42,8 @@ __all__ = [
     "SessionExpiredError",
     "SessionManager",
     "SessionMeta",
+    "SkillMeta",
+    "SkillRegistry",
     "TaskCompletionRequest",
     "TraceEvent",
     "WorkflowExecutionError",
