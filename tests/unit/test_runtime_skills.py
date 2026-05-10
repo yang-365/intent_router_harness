@@ -1,3 +1,5 @@
+"""Tests for runtime + v2 SkillRegistry integration."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,9 +7,10 @@ from pathlib import Path
 import pytest
 
 from intent_router_harness import load_prompt_harness
+from intent_router_harness.harness_v2.skill_registry import SkillRegistry
 
 
-def test_runtime_loads_agent_context_and_skills(tmp_path: Path) -> None:
+def test_runtime_loads_agent_context_and_skill_roots(tmp_path: Path) -> None:
     agent_path = tmp_path / "agent.md"
     agent_path.write_text("根路由约束。", encoding="utf-8")
     skills_root = tmp_path / "skills"
@@ -46,17 +49,23 @@ def test_runtime_loads_agent_context_and_skills(tmp_path: Path) -> None:
     )
 
     harness = load_prompt_harness(spec_path)
-
     assert harness is not None
     assert harness.agent_contexts[0].body == "根路由约束。"
-    skill = harness.skills.get("transfer-routing")
-    assert skill is not None
-    assert skill.intent_codes == ("AG_TRANS",)
-    assert skill.required_slots == ("payee_name", "amount")
-    assert skill.references[0].body == "详细转账槽位规则。"
+    assert len(harness.skill_roots) > 0
+
+    registry = SkillRegistry.from_roots(list(harness.skill_roots))
+    meta = registry.get_meta("transfer-routing")
+    assert meta is not None
+    assert meta.intent_codes == ("AG_TRANS",)
+    assert meta.required_slots == ("payee_name", "amount")
+    assert len(meta.references) == 1
+
+    ref_body = registry.load_reference("transfer-routing", "ref_001")
+    assert ref_body is not None
+    assert "详细转账槽位规则" in ref_body
 
 
-def test_runtime_rejects_skill_with_multiple_intents(tmp_path: Path) -> None:
+def test_registry_rejects_skill_with_multiple_intents(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     skill_dir = skills_root / "bad-routing"
     skill_dir.mkdir(parents=True)
@@ -65,6 +74,7 @@ def test_runtime_rejects_skill_with_multiple_intents(tmp_path: Path) -> None:
             [
                 "---",
                 "name: bad-routing",
+                "description: bad",
                 'intent_codes: ["AG_TRANSFER", "AG_BALANCE"]',
                 "---",
                 "# Bad Routing",
@@ -73,29 +83,18 @@ def test_runtime_rejects_skill_with_multiple_intents(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    spec_path = tmp_path / "harness.toml"
-    spec_path.write_text(
-        "\n".join(
-            [
-                'name = "invalid-skill-test"',
-                'version = "2026.05"',
-                f'skill_roots = ["{skills_root.as_posix()}"]',
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
     with pytest.raises(ValueError, match="multiple intent_codes"):
-        load_prompt_harness(spec_path)
+        SkillRegistry.from_roots([skills_root])
 
 
 def test_finance_skills_declare_required_slots() -> None:
     harness = load_prompt_harness(Path("examples/finance-router-harness.toml"))
     assert harness is not None
 
-    transfer = harness.skills.get("transfer-routing")
-    bill = harness.skills.get("bill-payment-routing")
+    registry = SkillRegistry.from_roots(list(harness.skill_roots))
+    transfer = registry.get_meta("transfer-routing")
+    bill = registry.get_meta("bill-payment-routing")
 
     assert transfer is not None
     assert transfer.required_slots == ("payee_name", "amount")

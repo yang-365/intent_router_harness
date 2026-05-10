@@ -41,7 +41,7 @@ class HarnessSpec(BaseModel):
     version: str = "0.1.0"
     description: str = ""
     enabled: bool = True
-    agent_runtime: Literal["classic", "deepagent"] = "classic"
+    agent_runtime: Literal["deepagent"] = "deepagent"
     agent_paths: list[str] = Field(default_factory=list)
     skill_roots: list[str] = Field(default_factory=list)
     hook_roots: list[str] = Field(default_factory=list)

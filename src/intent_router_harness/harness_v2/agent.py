@@ -7,6 +7,7 @@ from typing import Any
 
 from intent_router_harness.harness_v2.config import HarnessConfig
 from intent_router_harness.harness_v2.middleware import build_harness_middleware
+from intent_router_harness.harness_v2.skill_registry import SkillRegistry
 from intent_router_harness.harness_v2.workflow import create_workflow_tool
 
 logger = logging.getLogger(__name__)
@@ -60,12 +61,14 @@ def build_agent(
     config: HarnessConfig,
     *,
     workflow_hooks: list[Any] | None = None,
+    skill_registry: SkillRegistry | None = None,
 ) -> Any:
     """Construct a compiled deepagent graph from harness config.
 
     Args:
         config: Resolved harness configuration.
         workflow_hooks: Optional before/after hooks for workflow tool calls.
+        skill_registry: Pre-built skill registry for progressive loading.
 
     Returns:
         A compiled LangGraph ``StateGraph`` ready for ``.invoke()`` / ``.astream()``.
@@ -88,10 +91,13 @@ def build_agent(
 
     system_prompt = config.system_prompt + _PROTOCOL_SUFFIX if config.system_prompt else _PROTOCOL_SUFFIX.strip()
 
+    if skill_registry is None:
+        skill_registry = SkillRegistry.from_roots(config.skill_roots)
+
     harness_mw = build_harness_middleware(
         allowed_urls=config.workflow_allowed_urls,
         workflow_hooks=workflow_hooks,
-        skill_roots=config.skill_roots,
+        skill_registry=skill_registry,
     )
     harness_mw.append(
         ModelCallLimitMiddleware(
@@ -107,6 +113,8 @@ def build_agent(
         tools=[workflow_tool],
         system_prompt=system_prompt,
         middleware=harness_mw,
+        # deepagent natively loads skill name/description for intent recognition;
+        # SkillLifecycleMiddleware handles progressive body loading/unloading.
         skills=config.skill_sources if config.skill_sources else None,
         memory=config.memory_sources if config.memory_sources else None,
         backend=backend,

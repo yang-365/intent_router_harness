@@ -1,3 +1,9 @@
+"""Intent Router Harness — enterprise shell over deepagent SDK.
+
+Phase 2: classic runtime removed.  Use ``harness_v2`` for the
+deepagent-backed runtime with progressive skill loading.
+"""
+
 from intent_router_harness.runtime import (
     PromptHarness,
     binding_matches,
@@ -11,14 +17,6 @@ from intent_router_harness.schema import (
     HarnessSpec,
     SkillBinding,
     Variant,
-)
-from intent_router_harness.deepagent_service import (
-    DeepAgentAssistantProtocolService,
-    DeepAgentRunContext,
-    DeepAgentRunResult,
-    DeepAgentRunner,
-    NativeDeepAgentRunner,
-    SessionRunLockStore,
 )
 from intent_router_harness.contracts import (
     AssistantProtocolFrame,
@@ -41,22 +39,7 @@ from intent_router_harness.service import (
     RegressionValidationResponse,
     ServiceConfigurationError,
 )
-from intent_router_harness.skills import SkillDocument, SkillLibrary, load_skill_document
 from intent_router_harness.session_store import InMemorySessionStore
-from intent_router_harness.workflow import (
-    HTTPWorkflowToolClient,
-    WorkflowHTTPRequest,
-    WorkflowSettings,
-    WorkflowToolError,
-    WorkflowToolEvent,
-    WorkflowToolResult,
-    WorkflowToolSpec,
-    build_workflow_request_payload,
-    load_workflow_settings,
-    load_workflow_tool_specs,
-    parse_workflow_sse,
-    render_workflow_response_mapping,
-)
 from intent_router_harness.regression import (
     RegressionCase,
     RegressionExpectation,
@@ -68,25 +51,20 @@ from intent_router_harness.regression import (
 )
 
 __all__ = [
-    "EvalCase",
-    "DeepAgentAssistantProtocolService",
-    "DeepAgentConfig",
-    "DeepAgentRunContext",
-    "DeepAgentRunResult",
-    "DeepAgentRunner",
-    "ExperimentSpec",
-    "HarnessHealth",
-    "HarnessSpec",
-    "HTTPWorkflowToolClient",
-    "InMemorySessionStore",
-    "IntentRouterHarnessService",
     "AssistantProtocolFrame",
     "AssistantServiceResult",
     "AssistantTraceEvent",
+    "DeepAgentConfig",
+    "EvalCase",
+    "ExperimentSpec",
+    "HarnessHealth",
+    "HarnessSpec",
+    "InMemorySessionStore",
+    "IntentRouterHarnessService",
     "PlannedTask",
     "PlannerOutput",
     "PromptHarness",
-    "NativeDeepAgentRunner",
+    "RecognitionPlan",
     "RegressionCase",
     "RegressionCaseSummary",
     "RegressionExpectation",
@@ -95,33 +73,17 @@ __all__ = [
     "RegressionSuiteSummary",
     "RegressionValidationRequest",
     "RegressionValidationResponse",
-    "RecognitionPlan",
-    "ServiceConfigurationError",
     "RouterMessageRequest",
+    "ServiceConfigurationError",
     "SessionState",
-    "SessionRunLockStore",
     "SkillBinding",
-    "SkillDocument",
-    "SkillLibrary",
-    "Variant",
-    "WorkflowSettings",
-    "WorkflowHTTPRequest",
-    "WorkflowToolError",
-    "WorkflowToolEvent",
-    "WorkflowToolResult",
-    "WorkflowToolSpec",
-    "build_workflow_request_payload",
     "TaskCompletionRequest",
     "TaskRuntimeState",
+    "Variant",
     "binding_matches",
     "load_harness_spec",
     "load_prompt_harness",
     "load_regression_suite",
-    "load_workflow_settings",
-    "load_workflow_tool_specs",
-    "parse_workflow_sse",
-    "render_workflow_response_mapping",
-    "load_skill_document",
     "validate_case_transcripts",
     "validate_step_transcript",
 ]
