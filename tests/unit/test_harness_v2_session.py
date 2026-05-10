@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
 
 import pytest
 
@@ -26,22 +25,19 @@ class TestSessionManager:
 
     def test_concurrent_same_session_rejected(self):
         mgr = SessionManager()
-        with mgr.acquire("u1", "s1"):
-            with pytest.raises(SessionBusyError, match="already has an active"):
-                with mgr.acquire("u1", "s1"):
-                    pass
+        with mgr.acquire("u1", "s1"), pytest.raises(SessionBusyError, match="already has an active"):  # noqa: SIM117
+            with mgr.acquire("u1", "s1"):
+                pass
 
     def test_concurrent_different_sessions_allowed(self):
         mgr = SessionManager()
-        with mgr.acquire("u1", "s1"):
-            with mgr.acquire("u1", "s2") as meta2:
-                assert meta2.session_id == "s2"
+        with mgr.acquire("u1", "s1"), mgr.acquire("u1", "s2") as meta2:
+            assert meta2.session_id == "s2"
 
     def test_concurrent_different_users_allowed(self):
         mgr = SessionManager()
-        with mgr.acquire("u1", "s1"):
-            with mgr.acquire("u2", "s1") as meta2:
-                assert meta2.cust_id == "u2"
+        with mgr.acquire("u1", "s1"), mgr.acquire("u2", "s1") as meta2:
+            assert meta2.cust_id == "u2"
 
     def test_lock_released_after_exit(self):
         mgr = SessionManager()
@@ -52,9 +48,8 @@ class TestSessionManager:
 
     def test_lock_released_after_exception(self):
         mgr = SessionManager()
-        with pytest.raises(ValueError):
-            with mgr.acquire("u1", "s1"):
-                raise ValueError("boom")
+        with pytest.raises(ValueError), mgr.acquire("u1", "s1"):
+            raise ValueError("boom")
         with mgr.acquire("u1", "s1") as meta:
             assert meta.session_id == "s1"
 

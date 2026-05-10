@@ -1,36 +1,20 @@
 # Deployment
 
-This project has two service entrypoints:
-
-- `intent-router-harness serve`: lightweight stdlib HTTP server for local harness work.
-- `intent-router-harness serve-asgi`: deployable ASGI service backed by FastAPI and Uvicorn.
-
-Use the ASGI entrypoint for shared test environments.
-
-## Local ASGI
+## Local
 
 ```bash
-PYTHONPATH=src python -m intent_router_harness serve-asgi --host 0.0.0.0 --port 8765
+python -m intent_router_harness serve examples/deepagent-finance-router-harness.toml --port 8765
 ```
 
-Health and readiness:
+Health check:
 
 ```bash
 curl -s http://127.0.0.1:8765/healthz
-curl -s http://127.0.0.1:8765/readyz
 ```
 
 ## Configuration
 
-ASGI settings use the `INTENT_ROUTER_HARNESS_` environment prefix:
-
-```bash
-INTENT_ROUTER_HARNESS_SPEC_PATH=examples/finance-router-harness.toml
-INTENT_ROUTER_HARNESS_REGRESSION_SUITE_PATH=regressions/assistant_protocol_v0_6.json
-INTENT_ROUTER_HARNESS_LLM_ENV_FILE=.env.local
-```
-
-The LLM env file must provide:
+Environment variables (see `.env.example`):
 
 ```bash
 ROUTER_LLM_API_BASE_URL=...
@@ -38,12 +22,12 @@ ROUTER_LLM_API_KEY=...
 ROUTER_LLM_MODEL=...
 ```
 
-Do not commit `.env.local`. Keep secrets in the target platform's environment
-or secret manager.
+## Kubernetes
+
+See `k8s/intent-router-harness.yaml` and the full guide in
+[OPERATIONS_MANUAL.md](OPERATIONS_MANUAL.md#9-kubernetes-部署).
 
 ## Current Limits
 
-- Session storage is in-memory; use one replica or replace it before multi-instance deployment.
-- LLM calls are synchronous; size workers and timeouts accordingly.
-- Authentication, authorization, rate limiting, and persistent audit logging are not implemented yet.
-- External agent execution is not implemented; current service is strongest for `router_only` and protocol validation paths.
+- Session storage is in-memory; use one replica or replace with PostgresSaver for multi-instance.
+- Authentication, authorization, rate limiting, and persistent audit logging are not yet implemented.

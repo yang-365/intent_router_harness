@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -93,3 +94,35 @@ class TraceEvent(BaseModel):
     title: str = ""
     summary: str = ""
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Per-request trace collector (used by middleware to emit fine-grained events)
+# ---------------------------------------------------------------------------
+
+_trace_var: contextvars.ContextVar[list[TraceEvent]] = contextvars.ContextVar("_trace_var")
+
+
+def trace_collector_init() -> list[TraceEvent]:
+    """Initialise a new per-request trace buffer and bind it to the context."""
+    buf: list[TraceEvent] = []
+    _trace_var.set(buf)
+    return buf
+
+
+def emit_trace(stage: str, title: str, summary: str = "", **data: Any) -> None:
+    """Append a trace event to the current request's collector (no-op if none)."""
+    buf = _trace_var.get(None)
+    if buf is None:
+        return
+    buf.append(TraceEvent(stage=stage, title=title, summary=summary, data=data))
+
+
+def emit_trace_once(stage: str, title: str, summary: str = "", **data: Any) -> None:
+    """Like emit_trace but skips if the same *stage* was already emitted this request."""
+    buf = _trace_var.get(None)
+    if buf is None:
+        return
+    if any(e.stage == stage for e in buf):
+        return
+    buf.append(TraceEvent(stage=stage, title=title, summary=summary, data=data))

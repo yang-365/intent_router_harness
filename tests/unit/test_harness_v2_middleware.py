@@ -8,9 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from intent_router_harness.harness_v2.errors import WorkflowUrlNotAllowedError
 from intent_router_harness.harness_v2.skill_registry import SkillRegistry
-
 
 # ---------------------------------------------------------------------------
 # Shared mock fixtures for langchain imports
@@ -81,16 +79,17 @@ def skill_tree(tmp_path: Path) -> Path:
 
 
 class TestBuildHarnessMiddleware:
-    def test_returns_six_middleware(self):
+    def test_returns_seven_middleware(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware(allowed_urls=["http://ok.com"])
-        assert len(mw_list) == 6
+        assert len(mw_list) == 7
 
     def test_middleware_names(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware()
         names = [mw.name for mw in mw_list]
         assert "TaskProgressMiddleware" in names
+        assert "FrontendContextMiddleware" in names
         assert "CompletionGateMiddleware" in names
         assert "SkillLifecycleMiddleware" in names
         assert "SkillFileMiddleware" in names
@@ -112,7 +111,7 @@ class TestWorkflowGatewayUrlValidation:
         handler.assert_called_once()
         assert result == "result"
 
-    def test_blocked_url_raises(self):
+    def test_blocked_url_returns_tool_message(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware(allowed_urls=["http://ok.com"])
         gateway = [m for m in mw_list if m.name == "WorkflowGatewayMiddleware"][0]
@@ -121,9 +120,10 @@ class TestWorkflowGatewayUrlValidation:
         request.tool_call = {"name": "workflow_api_call", "args": {"url": "http://evil.com/hack"}}
         handler = MagicMock()
 
-        with pytest.raises(WorkflowUrlNotAllowedError):
-            gateway.wrap_tool_call(request, handler)
+        result = gateway.wrap_tool_call(request, handler)
         handler.assert_not_called()
+        assert "not in the allowed list" in result.content
+        assert "http://ok.com" in result.content
 
     def test_non_workflow_tool_passes_through(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
@@ -164,11 +164,8 @@ class TestCompletionGate:
 
 
 class TestSkillLifecycleMiddleware:
-    def test_no_op_without_intent_signal(self, skill_tree):
-        """Without an intent_code signal, middleware does not modify the request.
-
-        Skill name/description injection is handled by deepagent SDK natively.
-        """
+    def test_eager_load_on_first_call(self, skill_tree):
+        """On first model call (no AI history), eagerly inject all skill bodies."""
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware(skill_registry=registry)
@@ -181,10 +178,10 @@ class TestSkillLifecycleMiddleware:
         handler = MagicMock(return_value="response")
         lifecycle.wrap_model_call(request, handler)
 
-        # No override should be called — no intent signal in messages
-        request.override.assert_not_called()
-        # Handler should be called with the original request
-        handler.assert_called_once_with(request)
+        # On first call, all skills should be eagerly loaded via override
+        request.override.assert_called_once()
+        # Handler should be called with the overridden request
+        handler.assert_called_once()
 
     def test_detects_intent_from_ai_message(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])

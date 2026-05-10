@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from intent_router_harness.harness_v2.api import HarnessApp, create_app, _extract_frames, _build_user_input
+from intent_router_harness.harness_v2.api import HarnessApp, _build_user_input, _extract_frames, create_app
 from intent_router_harness.harness_v2.config import HarnessConfig
-from intent_router_harness.harness_v2.protocol import AssistantProtocolFrame, MessageRequest
-from intent_router_harness.harness_v2.session import SessionManager
+from intent_router_harness.harness_v2.protocol import MessageRequest
 
 
 def _patch_invoke_agent(monkeypatch, mock_agent):

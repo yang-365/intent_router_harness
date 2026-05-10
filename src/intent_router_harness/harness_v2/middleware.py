@@ -1,13 +1,14 @@
 """Enterprise middleware — strong runtime constraints over deepagent SDK.
 
-Six middleware classes handle everything that deepagent SDK does not provide:
+Seven middleware classes handle everything that deepagent SDK does not provide:
 
 1. TaskProgressMiddleware — enforce serial task execution, slot validation
-2. CompletionGateMiddleware — tasks complete only via frontend /completion call
-3. SkillLifecycleMiddleware — progressive skill load/unload per session context
-4. SkillFileMiddleware — intercept read_file for virtual skill/reference paths
-5. WorkflowGatewayMiddleware — URL whitelist + before/after hooks
-6. ProtocolOutputMiddleware — guarantee output conforms to AssistantProtocolFrame
+2. FrontendContextMiddleware — inject recommendTask / currentDisplay into LLM context
+3. CompletionGateMiddleware — tasks complete only via frontend /completion call
+4. SkillLifecycleMiddleware — progressive skill load/unload per session context
+5. SkillFileMiddleware — intercept read_file for virtual skill/reference paths
+6. WorkflowGatewayMiddleware — URL whitelist + before/after hooks
+7. ProtocolOutputMiddleware — guarantee output conforms to AssistantProtocolFrame
 
 All business logic lives in skill files — middleware is business-agnostic.
 """
@@ -18,9 +19,7 @@ import json
 import logging
 from typing import Any
 
-from intent_router_harness.harness_v2.errors import (
-    WorkflowUrlNotAllowedError,
-)
+from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_once
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,7 @@ def build_harness_middleware(
     try:
         from langchain.agents.middleware import AgentMiddleware
         from langchain.agents.middleware.types import hook_config
-        from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
     except ImportError as exc:
         raise RuntimeError(
             "langchain middleware is required; install the 'deepagent' extra"
@@ -88,13 +87,101 @@ def build_harness_middleware(
                 "- 当前任务未完成前，不要开始下一个任务\n"
                 "- workflow_api_call 完成后，将状态设为 waiting_assistant_completion，等待前端确认\n"
             )
+            emit_trace_once(
+                "task_constraints_injected",
+                "任务执行约束注入",
+                "串行执行、缺槽追问、前端确认完成",
+            )
             system_message = SystemMessage(
                 content=f"{existing_text}{constraint_block}" if existing_text else constraint_block.strip()
             )
             return request.override(system_message=system_message)
 
     # ------------------------------------------------------------------
-    # 2. CompletionGateMiddleware
+    # 2. FrontendContextMiddleware
+    # ------------------------------------------------------------------
+
+    class FrontendContextMiddleware(AgentMiddleware):
+        """Inject frontend context (recommendTask, currentDisplay) into system prompt.
+
+        Reads these fields from the latest HumanMessage JSON and, when non-empty,
+        appends a context block to the system message so the LLM can use them
+        for intent recognition and task planning.
+        """
+
+        @property
+        def name(self) -> str:
+            return "FrontendContextMiddleware"
+
+        def wrap_model_call(self, request: Any, handler: Any) -> Any:
+            return handler(self._inject_frontend_context(request))
+
+        async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+            return await handler(self._inject_frontend_context(request))
+
+        def _inject_frontend_context(self, request: Any) -> Any:
+            existing = request.system_message
+            existing_text = existing.text if existing is not None else ""
+            if "## Frontend Context" in existing_text:
+                return request
+
+            messages = getattr(request, "messages", None) or []
+            recommend_task, current_display = self._extract_context(messages)
+            if not recommend_task and not current_display:
+                return request
+
+            sections: list[str] = []
+            if current_display:
+                sections.append(
+                    "当前掌银页面展示卡片 (currentDisplay):\n"
+                    f"{json.dumps(current_display, ensure_ascii=False)}"
+                )
+            if recommend_task:
+                sections.append(
+                    "推荐任务 (recommendTask):\n"
+                    f"{json.dumps(recommend_task, ensure_ascii=False)}"
+                )
+            sections.append("请结合以上前端上下文进行意图识别和任务规划。")
+
+            emit_trace_once(
+                "frontend_context_injected",
+                "前端上下文注入",
+                f"recommendTask={len(recommend_task)}项, currentDisplay={len(current_display)}项",
+                recommend_task=recommend_task,
+                current_display=current_display,
+            )
+            context_block = "\n\n## Frontend Context\n" + "\n\n".join(sections)
+            system_message = SystemMessage(
+                content=f"{existing_text}{context_block}" if existing_text else context_block.strip()
+            )
+            return request.override(system_message=system_message)
+
+        @staticmethod
+        def _extract_context(
+            messages: list[Any],
+        ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            """Return (recommendTask, currentDisplay) from the latest HumanMessage."""
+            for msg in reversed(messages):
+                if not isinstance(msg, HumanMessage):
+                    continue
+                content = msg.content if isinstance(msg.content, str) else ""
+                if not content.strip().startswith("{"):
+                    continue
+                try:
+                    payload = json.loads(content)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(payload, dict):
+                    rt = payload.get("recommendTask") or []
+                    cd = payload.get("currentDisplay") or []
+                    return (
+                        rt if isinstance(rt, list) else [],
+                        cd if isinstance(cd, list) else [],
+                    )
+            return [], []
+
+    # ------------------------------------------------------------------
+    # 3. CompletionGateMiddleware
     # ------------------------------------------------------------------
 
     class CompletionGateMiddleware(AgentMiddleware):
@@ -124,6 +211,11 @@ def build_harness_middleware(
             if not any(self._is_workflow_result(msg, ToolMessage) for msg in messages):
                 return None
             logger.info("CompletionGate: workflow result detected, terminating loop")
+            emit_trace(
+                "completion_gate_triggered",
+                "任务完成门控触发",
+                "检测到workflow返回结果，终止agent循环，等待前端确认",
+            )
             return {
                 "jump_to": "end",
                 "messages": [
@@ -153,7 +245,7 @@ def build_harness_middleware(
             return getattr(msg, "name", "") == "workflow_api_call"
 
     # ------------------------------------------------------------------
-    # 3. SkillLifecycleMiddleware — progressive load/unload
+    # 4. SkillLifecycleMiddleware — progressive load/unload
     # ------------------------------------------------------------------
 
     class SkillLifecycleMiddleware(AgentMiddleware):
@@ -197,49 +289,107 @@ def build_harness_middleware(
             if self._registry is None:
                 return request
 
-            # Check conversation for intent signals to load specific skill
             messages = getattr(request, "messages", None) or []
             target_skill = self._detect_target_skill(messages)
+
+            # First model call (no prior AI messages): eagerly inject all
+            # skill bodies + references so the LLM has full context to
+            # identify intent AND call workflow_api_call in a single pass.
+            has_ai_history = any(isinstance(m, AIMessage) for m in messages)
+            if not has_ai_history and not self._loaded_skill:
+                return self._inject_all_skills(request)
 
             if not target_skill or target_skill == self._loaded_skill:
                 return request
 
-            # Unload previous skill context (don't re-inject old body)
             if self._loaded_skill:
                 logger.info(
                     "SkillLifecycle: unloading skill=%s, loading skill=%s",
                     self._loaded_skill,
                     target_skill,
                 )
+                emit_trace(
+                    "skill_unloaded",
+                    "技能卸载",
+                    f"卸载技能: {self._loaded_skill}",
+                    skill_name=self._loaded_skill,
+                )
+                emit_trace(
+                    "skill_loaded",
+                    "技能加载",
+                    f"加载技能: {target_skill}",
+                    skill_name=target_skill,
+                )
             else:
                 logger.info("SkillLifecycle: loading skill=%s", target_skill)
+                emit_trace(
+                    "skill_loaded",
+                    "技能加载",
+                    f"加载技能: {target_skill}",
+                    skill_name=target_skill,
+                )
             self._loaded_skill = target_skill
-            skill_body = self._registry.load_skill_body(target_skill)
-            if not skill_body:
+            return self._inject_single_skill(request, target_skill)
+
+        def _inject_all_skills(self, request: Any) -> Any:
+            """Inject all skill bodies + references for first-turn context."""
+            skill_blocks: list[str] = []
+            for name in self._registry.names():
+                block = self._build_skill_block(name)
+                if block:
+                    skill_blocks.append(block)
+            if not skill_blocks:
                 return request
-
-            meta = self._registry.get_meta(target_skill)
-            ref_listing = ""
-            if meta and meta.references:
-                ref_lines = ["\n### Available References (use read_file to load)"]
-                listing = self._registry.virtual_file_listing(target_skill)
-                for vpath, purpose in sorted(listing.items()):
-                    if "SKILL.md" not in vpath:
-                        ref_lines.append(f"- `{vpath}` — {purpose}")
-                if len(ref_lines) > 1:
-                    ref_listing = "\n".join(ref_lines)
-            skill_block = (
-                f"\n\n## Loaded Skill: {target_skill}\n\n"
-                f"{skill_body}"
-                f"{ref_listing}"
+            logger.info("SkillLifecycle: eagerly loading all %d skills", len(skill_blocks))
+            emit_trace(
+                "skills_eager_loaded",
+                "全量技能预加载",
+                f"首轮注入全部 {len(skill_blocks)} 个技能上下文",
+                skill_count=len(skill_blocks),
+                skill_names=list(self._registry.names()),
             )
+            combined = "\n".join(skill_blocks)
+            existing = request.system_message
+            existing_text = existing.text if existing is not None else ""
+            system_message = SystemMessage(
+                content=f"{existing_text}{combined}" if existing_text else combined.strip()
+            )
+            return request.override(system_message=system_message)
 
+        def _inject_single_skill(self, request: Any, skill_name: str) -> Any:
+            """Inject a single skill body + references."""
+            skill_block = self._build_skill_block(skill_name)
+            if not skill_block:
+                return request
             existing = request.system_message
             existing_text = existing.text if existing is not None else ""
             system_message = SystemMessage(
                 content=f"{existing_text}{skill_block}" if existing_text else skill_block.strip()
             )
             return request.override(system_message=system_message)
+
+        def _build_skill_block(self, skill_name: str) -> str | None:
+            """Build the full skill context block with body + references."""
+            skill_body = self._registry.load_skill_body(skill_name)
+            if not skill_body:
+                return None
+            meta = self._registry.get_meta(skill_name)
+            ref_sections = ""
+            if meta and meta.references:
+                ref_parts: list[str] = []
+                for ref in meta.references:
+                    ref_body = self._registry.load_reference(skill_name, ref.id)
+                    if ref_body:
+                        ref_parts.append(
+                            f"\n### Reference: {ref.id} — {ref.purpose}\n\n{ref_body}"
+                        )
+                if ref_parts:
+                    ref_sections = "\n".join(ref_parts)
+            return (
+                f"\n\n## Loaded Skill: {skill_name}\n\n"
+                f"{skill_body}"
+                f"{ref_sections}"
+            )
 
         def _detect_target_skill(self, messages: list[Any]) -> str | None:
             """Scan recent messages for intent_code or skill name signals.
@@ -301,7 +451,7 @@ def build_harness_middleware(
             return None
 
     # ------------------------------------------------------------------
-    # 4. SkillFileMiddleware — virtual file reads
+    # 5. SkillFileMiddleware — virtual file reads
     # ------------------------------------------------------------------
 
     class SkillFileMiddleware(AgentMiddleware):
@@ -352,6 +502,12 @@ def build_harness_middleware(
 
             content = self._resolve_virtual_path(normalized)
             if content is not None:
+                emit_trace(
+                    "skill_file_read",
+                    "技能文件读取",
+                    f"读取: {normalized}",
+                    path=normalized,
+                )
                 return ToolMessage(
                     content=content,
                     tool_call_id=_tool_call_id(request),
@@ -403,7 +559,7 @@ def build_harness_middleware(
             return None
 
     # ------------------------------------------------------------------
-    # 5. WorkflowGatewayMiddleware
+    # 6. WorkflowGatewayMiddleware
     # ------------------------------------------------------------------
 
     class WorkflowGatewayMiddleware(AgentMiddleware):
@@ -423,29 +579,84 @@ def build_harness_middleware(
 
         def wrap_tool_call(self, request: Any, handler: Any) -> Any:
             if _tool_name(request) == "workflow_api_call":
-                self._validate_url(request)
+                rejection = self._check_url(request)
+                if rejection is not None:
+                    return rejection
+                args = _tool_args(request)
+                emit_trace(
+                    "workflow_call_started",
+                    "Workflow API调用开始",
+                    f"method={args.get('method', 'POST')} url={args.get('url', '')}",
+                    method=args.get("method", "POST"),
+                    url=args.get("url", ""),
+                    body=args.get("body", {}),
+                )
                 self._run_before_hooks(request)
                 result = handler(request)
                 self._run_after_hooks(request, result)
+                result_content = getattr(result, "content", "") if result else ""
+                emit_trace(
+                    "workflow_call_completed",
+                    "Workflow API调用完成",
+                    f"返回结果长度: {len(result_content)} 字符",
+                    result_preview=result_content[:500] if result_content else "",
+                )
                 return result
             return handler(request)
 
         async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
             if _tool_name(request) == "workflow_api_call":
-                self._validate_url(request)
+                rejection = self._check_url(request)
+                if rejection is not None:
+                    return rejection
+                args = _tool_args(request)
+                emit_trace(
+                    "workflow_call_started",
+                    "Workflow API调用开始",
+                    f"method={args.get('method', 'POST')} url={args.get('url', '')}",
+                    method=args.get("method", "POST"),
+                    url=args.get("url", ""),
+                    body=args.get("body", {}),
+                )
                 self._run_before_hooks(request)
                 result = await handler(request)
                 self._run_after_hooks(request, result)
+                result_content = getattr(result, "content", "") if result else ""
+                emit_trace(
+                    "workflow_call_completed",
+                    "Workflow API调用完成",
+                    f"返回结果长度: {len(result_content)} 字符",
+                    result_preview=result_content[:500] if result_content else "",
+                )
                 return result
             return await handler(request)
 
-        def _validate_url(self, request: Any) -> None:
+        def _check_url(self, request: Any) -> Any | None:
+            """Return a ToolMessage rejection if the URL is not allowed, else None."""
             if not self._allowed:
-                return
+                return None
             args = _tool_args(request)
             url = str(args.get("url", ""))
-            if not any(url.startswith(prefix) for prefix in self._allowed):
-                raise WorkflowUrlNotAllowedError(url, sorted(self._allowed))
+            if any(url.startswith(prefix) for prefix in self._allowed):
+                return None
+            allowed_list = sorted(self._allowed)
+            logger.warning("workflow URL rejected: %s (allowed: %s)", url, allowed_list)
+            emit_trace(
+                "workflow_url_rejected",
+                "Workflow URL白名单拒绝",
+                f"URL不在白名单: {url}",
+                rejected_url=url,
+                allowed_urls=allowed_list,
+            )
+            return ToolMessage(
+                content=(
+                    f"Error: URL '{url}' is not in the allowed list.\n"
+                    f"Allowed URLs: {allowed_list}\n"
+                    "Please use one of the allowed URLs from the skill's workflow_request reference."
+                ),
+                tool_call_id=_tool_call_id(request),
+                name="workflow_api_call",
+            )
 
         def _run_before_hooks(self, request: Any) -> None:
             for hook in self._hooks:
@@ -461,7 +672,7 @@ def build_harness_middleware(
                         logger.warning("after-hook failed (non-fatal)", exc_info=True)
 
     # ------------------------------------------------------------------
-    # 6. ProtocolOutputMiddleware
+    # 7. ProtocolOutputMiddleware
     # ------------------------------------------------------------------
 
     class ProtocolOutputMiddleware(AgentMiddleware):
@@ -499,9 +710,51 @@ def build_harness_middleware(
             if isinstance(frames, list):
                 for frame in frames:
                     _fill_frame_defaults(frame)
+                    self._emit_frame_trace(frame)
             elif "status" in payload:
                 _fill_frame_defaults(payload)
+                self._emit_frame_trace(payload)
             return None
+
+        @staticmethod
+        def _emit_frame_trace(frame: dict[str, Any]) -> None:
+            """Emit trace events for key fields in a protocol frame."""
+            intent_code = frame.get("intent_code")
+            if intent_code:
+                emit_trace(
+                    "intent_recognized",
+                    "意图识别",
+                    f"识别意图: {intent_code}",
+                    intent_code=intent_code,
+                )
+            slot_memory = frame.get("slot_memory")
+            if slot_memory and isinstance(slot_memory, dict) and slot_memory:
+                emit_trace(
+                    "slots_extracted",
+                    "参数提取",
+                    f"提取参数: {', '.join(f'{k}={v}' for k, v in slot_memory.items())}",
+                    slot_memory=slot_memory,
+                )
+            task_list = frame.get("task_list")
+            if task_list and isinstance(task_list, list) and len(task_list) > 0:
+                emit_trace(
+                    "task_planned",
+                    "任务规划",
+                    f"规划了 {len(task_list)} 个任务",
+                    task_list=task_list,
+                    current_task=frame.get("current_task"),
+                )
+            status = frame.get("status")
+            completion_state = frame.get("completion_state", 0)
+            if status:
+                emit_trace(
+                    "protocol_frame_output",
+                    "协议帧输出",
+                    f"status={status}, completion_state={completion_state}",
+                    status=status,
+                    completion_state=completion_state,
+                    message=frame.get("message", ""),
+                )
 
     # ------------------------------------------------------------------
     # Assembly
@@ -509,6 +762,7 @@ def build_harness_middleware(
 
     middleware: list[Any] = [
         TaskProgressMiddleware(),
+        FrontendContextMiddleware(),
         CompletionGateMiddleware(),
         SkillLifecycleMiddleware(registry=skill_registry),
         SkillFileMiddleware(registry=skill_registry),
