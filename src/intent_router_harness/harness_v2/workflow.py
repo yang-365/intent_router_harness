@@ -69,13 +69,20 @@ def _execute_workflow_sse(
     *,
     timeout: float = 60.0,
 ) -> dict[str, Any]:
-    """Execute an HTTP request to a workflow SSE endpoint and parse the result."""
+    """Execute an HTTP request to a workflow endpoint and parse the result.
+
+    Attempts SSE parsing first.  If the response does not conform to the
+    expected SSE / ``node_output`` structure, the raw payload is returned
+    in ``output`` so that the caller always gets usable data.
+    """
+    raw_text = ""
     events: list[dict[str, Any]] = []
     try:
         with httpx.Client(timeout=timeout) as client, client.stream(method.upper(), url, json=body) as response:
             response.raise_for_status()
             buffer = ""
             for chunk in response.iter_text():
+                raw_text += chunk
                 buffer += chunk
                 while "\n\n" in buffer:
                     event_text, buffer = buffer.split("\n\n", 1)
@@ -91,19 +98,39 @@ def _execute_workflow_sse(
     except httpx.HTTPError as exc:
         raise WorkflowExecutionError(f"workflow HTTP error: {exc}") from exc
 
+    # No SSE events parsed — return raw response body directly.
     if not events:
-        raise WorkflowExecutionError("workflow returned no SSE events")
+        logger.warning("workflow returned no SSE events, returning raw payload")
+        return _raw_output(raw_text)
 
     last = events[-1]
     node_output = last.get("node_output")
-    if node_output is None:
-        raise WorkflowExecutionError("workflow final event has no node_output")
+    if node_output is not None:
+        return {
+            "node_output": node_output,
+            "event_count": len(events),
+            "events": events,
+        }
 
+    # SSE events exist but none contain node_output — return raw events.
+    logger.warning("workflow final event has no node_output, returning raw events")
     return {
-        "node_output": node_output,
+        "output": events[-1] if len(events) == 1 else events,
         "event_count": len(events),
         "events": events,
     }
+
+
+def _raw_output(text: str) -> dict[str, Any]:
+    """Wrap raw response text: parse as JSON if possible, otherwise string."""
+    text = text.strip()
+    if text:
+        try:
+            parsed = json.loads(text)
+            return {"output": parsed}
+        except json.JSONDecodeError:
+            pass
+    return {"output": text}
 
 
 def _parse_sse_event(text: str) -> dict[str, Any] | None:

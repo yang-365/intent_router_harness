@@ -1,8 +1,8 @@
-"""Tests for harness_v2.workflow module — SSE parsing."""
+"""Tests for harness_v2.workflow module — SSE parsing and raw fallback."""
 
 from __future__ import annotations
 
-from intent_router_harness.harness_v2.workflow import _parse_sse_event
+from intent_router_harness.harness_v2.workflow import _parse_sse_event, _raw_output
 
 
 class TestParseSseEvent:
@@ -37,3 +37,26 @@ class TestParseSseEvent:
         result = _parse_sse_event(text)
         assert result is not None
         assert result["x"] == 1
+
+
+class TestRawOutput:
+    def test_json_payload(self):
+        result = _raw_output('{"status": "ok", "data": [1, 2]}')
+        assert result["output"] == {"status": "ok", "data": [1, 2]}
+
+    def test_plain_text_payload(self):
+        result = _raw_output("some plain text response")
+        assert result["output"] == "some plain text response"
+
+    def test_empty_payload(self):
+        result = _raw_output("")
+        assert result["output"] == ""
+
+    def test_whitespace_only(self):
+        result = _raw_output("   \n  ")
+        assert result["output"] == ""
+
+    def test_html_payload(self):
+        html = "<html><body>Error 502</body></html>"
+        result = _raw_output(html)
+        assert result["output"] == html
