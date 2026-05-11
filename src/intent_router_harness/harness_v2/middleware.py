@@ -747,6 +747,10 @@ def build_harness_middleware(
     class ProtocolOutputMiddleware(AgentMiddleware):
         """Validate and normalize agent output to AssistantProtocolFrame format."""
 
+        def __init__(self) -> None:
+            self._prev_tasks: dict[str, dict[str, Any]] = {}
+            self._prev_current_task_id: str | None = None
+
         @property
         def name(self) -> str:
             return "ProtocolOutputMiddleware"
@@ -780,9 +784,11 @@ def build_harness_middleware(
                 for frame in frames:
                     _fill_frame_defaults(frame)
                     self._emit_frame_trace(frame)
+                    self._emit_task_crud_traces(frame)
             elif "status" in payload:
                 _fill_frame_defaults(payload)
                 self._emit_frame_trace(payload)
+                self._emit_task_crud_traces(payload)
             return None
 
         @staticmethod
@@ -824,6 +830,90 @@ def build_harness_middleware(
                     completion_state=completion_state,
                     message=frame.get("message", ""),
                 )
+
+        def _emit_task_crud_traces(self, frame: dict[str, Any]) -> None:
+            """Diff task_list and current_task against previous state, emit CRUD events."""
+            task_list = frame.get("task_list")
+            if not isinstance(task_list, list):
+                task_list = []
+            current_task = frame.get("current_task")
+
+            new_tasks: dict[str, dict[str, Any]] = {}
+            for task in task_list:
+                tid = task.get("taskId") or task.get("id") or ""
+                if tid:
+                    new_tasks[tid] = task
+
+            prev = self._prev_tasks
+            prev_ids = set(prev.keys())
+            new_ids = set(new_tasks.keys())
+
+            # Added tasks
+            for tid in new_ids - prev_ids:
+                task = new_tasks[tid]
+                emit_trace(
+                    "task_added",
+                    "任务新增",
+                    f"新增任务: {tid} — {task.get('title') or task.get('intent_code') or ''}",
+                    taskId=tid,
+                    task=task,
+                )
+
+            # Removed tasks
+            for tid in prev_ids - new_ids:
+                task = prev[tid]
+                emit_trace(
+                    "task_removed",
+                    "任务移除",
+                    f"移除任务: {tid}",
+                    taskId=tid,
+                    task=task,
+                )
+
+            # Updated tasks (status or slot_memory changed)
+            for tid in prev_ids & new_ids:
+                old_task = prev[tid]
+                new_task = new_tasks[tid]
+                old_status = old_task.get("status", "")
+                new_status = new_task.get("status", "")
+                if old_status != new_status:
+                    emit_trace(
+                        "task_status_changed",
+                        "任务状态变更",
+                        f"任务 {tid}: {old_status} → {new_status}",
+                        taskId=tid,
+                        old_status=old_status,
+                        new_status=new_status,
+                        task=new_task,
+                    )
+                old_slots = old_task.get("slot_memory", {})
+                new_slots = new_task.get("slot_memory", {})
+                if old_slots != new_slots:
+                    emit_trace(
+                        "task_slots_updated",
+                        "任务参数更新",
+                        f"任务 {tid} 参数变更",
+                        taskId=tid,
+                        old_slots=old_slots,
+                        new_slots=new_slots,
+                    )
+
+            # Current task switch
+            new_current_id = (current_task.get("taskId") or current_task.get("id") or "") if isinstance(current_task, dict) else ""
+            if new_current_id and new_current_id != self._prev_current_task_id:
+                emit_trace(
+                    "current_task_switched",
+                    "当前任务切换",
+                    f"切换当前任务: {self._prev_current_task_id or '(无)'} → {new_current_id}",
+                    old_taskId=self._prev_current_task_id or "",
+                    new_taskId=new_current_id,
+                    current_task=current_task,
+                )
+
+            # Update state for next diff
+            self._prev_tasks = new_tasks
+            if new_current_id:
+                self._prev_current_task_id = new_current_id
 
     # ------------------------------------------------------------------
     # Assembly
