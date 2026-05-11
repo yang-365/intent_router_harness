@@ -164,8 +164,8 @@ class TestCompletionGate:
 
 
 class TestSkillLifecycleMiddleware:
-    def test_eager_load_on_first_call(self, skill_tree):
-        """On first model call (no AI history), eagerly inject all skill bodies."""
+    def test_metadata_only_on_first_call(self, skill_tree):
+        """On first model call (no intent yet), inject only metadata summary — NOT full bodies."""
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware(skill_registry=registry)
@@ -178,12 +178,19 @@ class TestSkillLifecycleMiddleware:
         handler = MagicMock(return_value="response")
         lifecycle.wrap_model_call(request, handler)
 
-        # On first call, all skills should be eagerly loaded via override
+        # On first call, only metadata summary should be injected (not full bodies)
         request.override.assert_called_once()
-        # Handler should be called with the overridden request
+        call_args = request.override.call_args
+        sm = call_args[1].get("system_message") or (call_args[0][0] if call_args[0] else None)
+        assert sm is not None
+        # Should contain metadata summary header, not full skill body
+        assert "Available Skills" in sm.content
+        # Should NOT contain full skill body (no "## Loaded Skill:" block)
+        assert "## Loaded Skill:" not in sm.content
         handler.assert_called_once()
 
-    def test_detects_intent_from_ai_message(self, skill_tree):
+    def test_detects_intent_loads_body_and_references(self, skill_tree):
+        """After intent detected, load skill body + references BEFORE model runs."""
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list = build_harness_middleware(skill_registry=registry)
@@ -200,12 +207,58 @@ class TestSkillLifecycleMiddleware:
 
         lifecycle.wrap_model_call(request, lambda r: "ok")
 
-        # Skill body should have been injected
+        # Skill body AND references should have been injected
         call_args = request.override.call_args
         assert call_args is not None
         sm = call_args[1].get("system_message") or (call_args[0][0] if call_args[0] else None)
-        if sm:
-            assert "transfer-routing" in sm.content or "转账" in sm.content
+        assert sm is not None
+        # Should contain full skill body
+        assert "## Loaded Skill: transfer-routing" in sm.content
+        # Should contain reference content (slot filling rules)
+        assert "payee_name" in sm.content
+
+    def test_skill_unload_on_switch(self, skill_tree):
+        """When intent changes, previous skill is unloaded and new skill loaded."""
+        # Add a second skill to the tree
+        payment = skill_tree / "bill-payment"
+        payment.mkdir()
+        (payment / "SKILL.md").write_text(
+            '---\nname: bill-payment\ndescription: 缴费意图\n'
+            'intent_codes: ["AG_PAY_BILL"]\nrequired_slots: ["payment_item"]\n---\n'
+            '\n# 缴费规则\n\n缴费内容。\n',
+            encoding="utf-8",
+        )
+        registry = SkillRegistry.from_roots([skill_tree])
+        from intent_router_harness.harness_v2.middleware import build_harness_middleware
+        mw_list = build_harness_middleware(skill_registry=registry)
+        lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
+
+        # First: load transfer skill
+        ai_msg1 = FakeAIMessage(content=json.dumps({
+            "frames": [{"intent_code": "AG_TRANS", "status": "running"}]
+        }))
+        request1 = MagicMock()
+        request1.system_message = FakeSystemMessage(content="")
+        request1.messages = [ai_msg1]
+        request1.override.return_value = request1
+        lifecycle.wrap_model_call(request1, lambda r: "ok")
+        assert lifecycle._loaded_skill == "transfer-routing"
+
+        # Second: switch to payment skill
+        ai_msg2 = FakeAIMessage(content=json.dumps({
+            "frames": [{"intent_code": "AG_PAY_BILL", "status": "running"}]
+        }))
+        request2 = MagicMock()
+        request2.system_message = FakeSystemMessage(content="")
+        request2.messages = [ai_msg2]
+        request2.override.return_value = request2
+        lifecycle.wrap_model_call(request2, lambda r: "ok")
+        assert lifecycle._loaded_skill == "bill-payment"
+        # New skill body should be injected
+        call_args = request2.override.call_args
+        sm = call_args[1].get("system_message") or (call_args[0][0] if call_args[0] else None)
+        assert sm is not None
+        assert "缴费" in sm.content
 
 
 class TestSkillFileMiddleware:
