@@ -364,6 +364,32 @@ _VALIDATOR_HTML = """<!doctype html>
       color: #991b1b;
     }
 
+    .frame-field {
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .frame-field-label {
+      display: block;
+      padding: 4px 10px;
+      background: #f1f5f9;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.5px;
+    }
+
+    .frame-field pre {
+      margin: 0;
+      padding: 8px 10px;
+      font-size: 12px;
+      background: var(--panel-bg);
+      border: none;
+      border-radius: 0;
+    }
+
     pre {
       margin: 0;
       overflow: auto;
@@ -642,7 +668,7 @@ _VALIDATOR_HTML = """<!doctype html>
       }
     }
 
-    function appendBubble(kind, title, text, payload) {
+    function appendBubble(kind, title, text, payload, extraHtml) {
       clearEmpty();
       const node = document.createElement("article");
       node.className = "bubble " + kind;
@@ -661,6 +687,7 @@ _VALIDATOR_HTML = """<!doctype html>
         </div>
         <div class="bubble-text">${escapeHtml(text || "")}</div>
         ${payload ? renderTags(payload) : ""}
+        ${extraHtml || ""}
         ${details}
       `;
       els.conversation.appendChild(node);
@@ -672,10 +699,13 @@ _VALIDATOR_HTML = """<!doctype html>
         return "";
       }
       const tags = [];
-      if (payload.status) tags.push(["status", payload.status, tagClassForStatus(payload.status)]);
-      if (payload.intent_code) tags.push(["intent", payload.intent_code, ""]);
-      if (payload.completion_reason) tags.push(["reason", payload.completion_reason, ""]);
       if (payload.stage) tags.push(["stage", payload.stage, ""]);
+      if (typeof payload.ok === "boolean") tags.push(["ok", payload.ok, payload.ok ? "ok" : "err"]);
+      if (payload.status) tags.push(["status", payload.status, tagClassForStatus(payload.status)]);
+      if (typeof payload.completion_state === "number") tags.push(["completion_state", payload.completion_state, ""]);
+      if (payload.completion_reason) tags.push(["reason", payload.completion_reason, ""]);
+      if (payload.intent_code) tags.push(["intent", payload.intent_code, ""]);
+      if (payload.errorCode) tags.push(["errorCode", payload.errorCode, "err"]);
       if (payload.current_task && payload.current_task.taskId) tags.push(["task", payload.current_task.taskId, ""]);
       if (!tags.length) {
         return "";
@@ -791,7 +821,7 @@ _VALIDATOR_HTML = """<!doctype html>
         sessionId: els.sessionId.value.trim(),
         custID: els.custID.value.trim() || "C0001",
         taskId: state.currentTask.taskId,
-        completionSignal: 2,
+        completionSignal: 1,
         stream: true,
         debugTrace: els.debugTrace.checked,
       };
@@ -980,8 +1010,28 @@ _VALIDATOR_HTML = """<!doctype html>
       }
       const title = payload.stage === "intent_recognition" ? "intent recognition" : "message";
       const text = payload.message || payload.completion_reason || payload.status || "";
-      appendBubble("message", title, text, payload);
+      appendBubble("message", title, text, payload, renderFrameFields(payload));
       updateRuntime();
+    }
+
+    function renderFrameFields(payload) {
+      const sections = [];
+      if (payload.output && typeof payload.output === "object" && Object.keys(payload.output).length) {
+        sections.push(`<div class="frame-field"><span class="frame-field-label">output</span><pre>${escapeHtml(JSON.stringify(payload.output, null, 2))}</pre></div>`);
+      }
+      if (payload.slot_memory && typeof payload.slot_memory === "object" && Object.keys(payload.slot_memory).length) {
+        sections.push(`<div class="frame-field"><span class="frame-field-label">slot_memory</span><pre>${escapeHtml(JSON.stringify(payload.slot_memory, null, 2))}</pre></div>`);
+      }
+      if (Array.isArray(payload.task_list) && payload.task_list.length) {
+        sections.push(`<div class="frame-field"><span class="frame-field-label">task_list</span><pre>${escapeHtml(JSON.stringify(payload.task_list, null, 2))}</pre></div>`);
+      }
+      if (payload.current_task) {
+        sections.push(`<div class="frame-field"><span class="frame-field-label">current_task</span><pre>${escapeHtml(JSON.stringify(payload.current_task, null, 2))}</pre></div>`);
+      }
+      if (Array.isArray(payload.actions) && payload.actions.length) {
+        sections.push(`<div class="frame-field"><span class="frame-field-label">actions</span><pre>${escapeHtml(JSON.stringify(payload.actions, null, 2))}</pre></div>`);
+      }
+      return sections.join("");
     }
 
     function updateRuntime() {
