@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill 加载与卸载生命周期 — Intent Router Harness</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --border: #e2e8f0;
+    --accent: #3b82f6;
+    --accent-light: #dbeafe;
+    --green: #10b981;
+    --green-light: #d1fae5;
+    --orange: #f59e0b;
+    --orange-light: #fef3c7;
+    --red: #ef4444;
+    --red-light: #fee2e2;
+    --purple: #8b5cf6;
+    --purple-light: #ede9fe;
+    --gray: #64748b;
+    --gray-light: #f1f5f9;
+    --text: #1e293b;
+    --muted: #64748b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 32px 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-size: 15px;
+    margin-bottom: 32px;
+  }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 40px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--accent);
+    color: var(--text);
+  }
+
+  h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 24px 0 12px;
+    color: var(--text);
+  }
+
+  /* ---- Section Cards ---- */
+  .section-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  /* ---- Flow Diagram ---- */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+    padding-left: 40px;
+  }
+
+  .flow-step {
+    position: relative;
+    padding: 16px 20px;
+    margin-bottom: 0;
+    border-left: 3px solid var(--border);
+    margin-left: 0;
+  }
+
+  .flow-step:last-child { border-left-color: transparent; }
+
+  .flow-step::before {
+    content: attr(data-step);
+    position: absolute;
+    left: -52px;
+    top: 14px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+  }
+
+  .flow-step.phase-1::before { background: var(--accent); }
+  .flow-step.phase-2::before { background: var(--green); }
+  .flow-step.phase-3::before { background: var(--purple); }
+  .flow-step.phase-unload::before { background: var(--orange); }
+  .flow-step.phase-complete::before { background: var(--red); }
+
+  .flow-step .step-title {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+
+  .flow-step .step-detail {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .flow-step .step-code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 12px;
+    background: var(--gray-light);
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-top: 8px;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--text);
+  }
+
+  .flow-step .step-trace {
+    display: inline-block;
+    font-family: monospace;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-top: 6px;
+    margin-right: 4px;
+  }
+
+  .trace-blue  { background: var(--accent-light); color: #1d4ed8; }
+  .trace-green { background: var(--green-light);  color: #065f46; }
+  .trace-orange{ background: var(--orange-light); color: #92400e; }
+  .trace-purple{ background: var(--purple-light); color: #5b21b6; }
+  .trace-red   { background: var(--red-light);    color: #991b1b; }
+
+  /* ---- Data Structure Tables ---- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 12px 0;
+  }
+
+  th {
+    background: var(--gray-light);
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border);
+  }
+
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  td code, th code {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+    background: var(--gray-light);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* ---- File Tree ---- */
+  .file-tree {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    padding: 16px 20px;
+    background: var(--gray-light);
+    border-radius: 8px;
+    margin: 12px 0;
+  }
+
+  .file-tree .dir  { color: var(--accent); font-weight: 600; }
+  .file-tree .file { color: var(--text); }
+  .file-tree .desc { color: var(--muted); font-style: italic; }
+
+  /* ---- Phase Banner ---- */
+  .phase-banner {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+
+  .phase-banner.p1 { background: var(--accent-light); color: #1d4ed8; }
+  .phase-banner.p2 { background: var(--green-light);  color: #065f46; }
+  .phase-banner.p3 { background: var(--purple-light); color: #5b21b6; }
+
+  /* ---- Decision Diamond ---- */
+  .decision-box {
+    background: var(--orange-light);
+    border: 2px solid var(--orange);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+
+  .decision-box strong { color: #92400e; }
+
+  /* ---- System Prompt Preview ---- */
+  .prompt-preview {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 12px 0;
+  }
+
+  .prompt-preview .pp-header {
+    background: var(--gray-light);
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .prompt-preview .pp-body {
+    padding: 12px 14px;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    background: #fff;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .pp-body .highlight {
+    background: #fef08a;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
+  /* ---- Connector Arrow ---- */
+  .arrow-down {
+    text-align: center;
+    padding: 8px 0;
+    color: var(--muted);
+    font-size: 20px;
+  }
+
+  /* ---- Two-Column Layout ---- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 800px) {
+    .two-col { grid-template-columns: 1fr; }
+    .flow { padding-left: 36px; }
+  }
+
+  /* ---- Legend ---- */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 12px 0;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  /* ---- Sequence Diagram (CSS-based) ---- */
+  .seq-diagram {
+    display: grid;
+    grid-template-columns: 120px 120px 140px 120px 120px;
+    gap: 0;
+    margin: 20px 0;
+    font-size: 12px;
+  }
+
+  .seq-actor {
+    text-align: center;
+    padding: 8px 4px;
+    font-weight: 700;
+    font-size: 13px;
+    border-bottom: 2px solid var(--accent);
+  }
+
+  .seq-row {
+    display: contents;
+  }
+
+  .seq-cell {
+    padding: 6px 4px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+  }
+
+  .seq-msg {
+    background: var(--accent-light);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .seq-msg.green { background: var(--green-light); }
+  .seq-msg.purple { background: var(--purple-light); }
+  .seq-msg.orange { background: var(--orange-light); }
+</style>
+</head>
+<body>
+
+<h1>Skill 加载与卸载生命周期</h1>
+<p class="subtitle">
+  Intent Router Harness &mdash; SkillLifecycleMiddleware + SkillFileMiddleware + SkillRegistry 协作流程
+</p>
+
+<!-- ============================================================ -->
+<h2>1. Skill 目录结构与数据模型</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>1.1 Skill 目录结构</h3>
+  <div class="file-tree">
+<span class="dir">skills/</span>
+├── <span class="dir">transfer-routing/</span>                  <span class="desc"># 转账意图 skill</span>
+│   ├── <span class="file">SKILL.md</span>                        <span class="desc"># frontmatter(name, description, intent_codes, required_slots, references) + body(意图边界逻辑)</span>
+│   └── <span class="dir">references/</span>
+│       ├── <span class="file">slot_filling.md</span>             <span class="desc"># 提槽规则：必填槽位、提取原则、多轮补槽逻辑</span>
+│       └── <span class="file">workflow_request.md</span>         <span class="desc"># API 调用方式：workflow_api_call 参数组装</span>
+└── <span class="dir">bill-payment-routing/</span>              <span class="desc"># 缴费意图 skill</span>
+    └── <span class="file">SKILL.md</span>                        <span class="desc"># frontmatter + body（无 references 目录）</span>
+  </div>
+
+  <h3>1.2 SKILL.md Frontmatter 字段</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>说明</th><th>示例</th></tr>
+    <tr>
+      <td><code>name</code></td>
+      <td><code>str</code></td>
+      <td>唯一技能名称，用于 Registry 索引</td>
+      <td><code>transfer-routing</code></td>
+    </tr>
+    <tr>
+      <td><code>description</code></td>
+      <td><code>str</code></td>
+      <td>技能描述，注入 metadata 摘要供 LLM 识别意图</td>
+      <td><code>掌银转账意图识别技能</code></td>
+    </tr>
+    <tr>
+      <td><code>intent_codes</code></td>
+      <td><code>list[str]</code></td>
+      <td>意图码列表（每个 skill 只允许 1 个）</td>
+      <td><code>["AG_TRANS"]</code></td>
+    </tr>
+    <tr>
+      <td><code>required_slots</code></td>
+      <td><code>list[str]</code></td>
+      <td>必填槽位列表</td>
+      <td><code>["payee_name", "amount"]</code></td>
+    </tr>
+    <tr>
+      <td><code>references</code></td>
+      <td><code>list[dict]</code></td>
+      <td>reference 文件清单：<code>id</code> / <code>path</code> / <code>purpose</code></td>
+      <td><code>[{"id":"slot_filling","path":"references/slot_filling.md","purpose":"转账提槽规则"}]</code></td>
+    </tr>
+  </table>
+
+  <h3>1.3 Registry 数据模型（内存中）</h3>
+  <table>
+    <tr><th>类</th><th>存储内容</th><th>何时创建</th></tr>
+    <tr>
+      <td><code>SkillMeta</code></td>
+      <td>name, description, skill_dir, intent_codes, required_slots, references(SkillReferenceMeta[])</td>
+      <td>启动时扫描 SKILL.md frontmatter</td>
+    </tr>
+    <tr>
+      <td><code>SkillReferenceMeta</code></td>
+      <td>id, relative_path, purpose</td>
+      <td>启动时从 frontmatter.references 解析</td>
+    </tr>
+    <tr>
+      <td><code>SkillRegistry._skills</code></td>
+      <td><code>dict[name → SkillMeta]</code></td>
+      <td>启动时构建</td>
+    </tr>
+    <tr>
+      <td><code>SkillRegistry._intent_index</code></td>
+      <td><code>dict[intent_code → skill_name]</code></td>
+      <td>启动时构建</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. 启动阶段：Registry 初始化</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <div class="flow">
+    <div class="flow-step phase-1" data-step="1">
+      <div class="step-title">SkillRegistry.from_roots(skill_roots)</div>
+      <div class="step-detail">
+        TOML spec 中 <code>skill_roots = ["../skills"]</code> 指定扫描目录。
+        遍历每个 root 下的子目录，找到包含 <code>SKILL.md</code> 的目录。
+      </div>
+      <div class="step-code">HarnessConfig.load("spec.toml")
+→ skill_roots = ["../skills"]
+→ SkillRegistry.from_roots(resolved_paths)</div>
+    </div>
+    <div class="flow-step phase-1" data-step="2">
+      <div class="step-title">解析 Frontmatter（仅元数据，不读 body）</div>
+      <div class="step-detail">
+        对每个 <code>SKILL.md</code> 调用 <code>_parse_skill_metadata()</code>：<br>
+        &bull; 用 <code>---</code> 分割 frontmatter 和 body<br>
+        &bull; 解析 YAML frontmatter → <code>SkillMeta</code><br>
+        &bull; 解析 <code>references</code> 字段 → <code>SkillReferenceMeta[]</code><br>
+        &bull; <strong>不读取 body 内容和 reference 文件内容</strong> — 按需加载
+      </div>
+      <div class="step-code">_parse_skill_metadata("/skills/transfer-routing/SKILL.md")
+→ SkillMeta(name="transfer-routing", intent_codes=("AG_TRANS",),
+     required_slots=("payee_name","amount"),
+     references=(SkillReferenceMeta(id="slot_filling",...), ...))</div>
+    </div>
+    <div class="flow-step phase-1" data-step="3">
+      <div class="step-title">校验 + 构建意图索引</div>
+      <div class="step-detail">
+        &bull; <code>_validate_skill_meta()</code>：每个 skill 只允许 1 个 intent_code<br>
+        &bull; 检查 intent_code 冲突（同一个 intent_code 不能被两个 skill 声明）<br>
+        &bull; 写入 <code>_intent_index: {"AG_TRANS" → "transfer-routing", "AG_PAY_BILL" → "bill-payment-routing"}</code>
+      </div>
+      <div class="step-trace trace-blue">registry_ready: count=2, skills=[bill-payment-routing, transfer-routing]</div>
+    </div>
+  </div>
+
+  <div class="decision-box">
+    <strong>关键设计：</strong>启动时只解析元数据（frontmatter），不读取 SKILL.md body 和 reference 文件内容。
+    Body 和 reference 在运行时按需加载，减少初始内存占用，支持大量 skill 注册。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. 运行时：三阶段渐进式加载</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div> Phase 1 — 元数据注入</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div> Phase 2 — 全量加载</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div> Phase 3 — 持续注入</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div> 卸载 + 切换</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div> 完成</div>
+  </div>
+</div>
+
+<!-- ---- Phase 1 ---- -->
+<div class="section-card">
+  <span class="phase-banner p1">Phase 1 — 元数据注入（意图识别前）</span>
+
+  <h3>触发条件</h3>
+  <div class="decision-box">
+    <code>_prepare_skill_context()</code> 判断：<br>
+    <strong>target_skill == None</strong> 且 <strong>self._loaded_skill == None</strong><br>
+    → 尚未检测到任何意图，也没有已加载的 skill
+  </div>
+
+  <div class="flow">
+    <div class="flow-step phase-1" data-step="1">
+      <div class="step-title">_detect_target_skill(messages) → None</div>
+      <div class="step-detail">
+        扫描所有历史消息（从最新到最旧），两级检测：<br>
+        &bull; Level 1: JSON <code>intent_code</code> 字段（structured output）<br>
+        &bull; Level 2: 文本扫描已注册的 intent_code（如 <code>"AG_TRANS"</code> 出现在文本中）<br>
+        首次用户输入（如"给张三转账500元"）还没有 agent 回复，所以检测结果为 None。
+      </div>
+    </div>
+    <div class="flow-step phase-1" data-step="2">
+      <div class="step-title">_inject_metadata_summary(request)</div>
+      <div class="step-detail">
+        调用 <code>SkillRegistry.all_metadata_summary()</code> 生成轻量摘要，注入到 system prompt。<br>
+        摘要内容：每个 skill 的 name + description + intent_codes + required_slots。<br>
+        <strong>不包含 SKILL.md body，不包含 reference 文件内容。</strong>
+      </div>
+      <div class="step-trace trace-blue">skill_metadata_injected: 注入 2 个技能摘要用于意图识别</div>
+    </div>
+    <div class="flow-step phase-1" data-step="3">
+      <div class="step-title">注入 Skill Loading Protocol 指令</div>
+      <div class="step-detail">
+        在 metadata 摘要后追加指令，引导 LLM 执行正确顺序：<br>
+        <em>"识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，
+        了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。
+        不要编造 workflow URL，必须使用 reference 文件中的完整地址。"</em>
+      </div>
+    </div>
+  </div>
+
+  <div class="prompt-preview">
+    <div class="pp-header">System Prompt（Phase 1 注入后）</div>
+    <div class="pp-body">## Task Execution Constraints
+- 任务必须串行执行：一次只推进一个 current_task
+- 当前任务缺少必填参数时，必须向用户追问...
+- workflow_api_call 完成后，将状态设为 waiting_assistant_completion...
+
+<span class="highlight">## Available Skills (Intent Recognition)
+- **transfer-routing**: 掌银转账意图识别技能
+  intent_codes: ["AG_TRANS"]
+  required_slots: ["payee_name", "amount"]
+- **bill-payment-routing**: 识别并处理水电费、话费等缴费意图...
+  intent_codes: ["AG_PAY_BILL"]
+  required_slots: ["payment_item", "amount"]
+
+## Skill Loading Protocol
+识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件...</span></div>
+  </div>
+
+  <div class="decision-box">
+    <strong>Phase 1 目的：</strong>LLM 只看到技能名称和描述，可以做意图识别，但不知道提槽细节和 API 地址。
+    保持上下文精简，避免在意图识别阶段注入不相关 skill 的完整内容。
+  </div>
+</div>
+
+<div class="arrow-down">&#x25BC;</div>
+
+<!-- ---- Phase 2 ---- -->
+<div class="section-card">
+  <span class="phase-banner p2">Phase 2 — 全量加载（意图识别后）</span>
+
+  <h3>触发条件</h3>
+  <div class="decision-box">
+    <code>_prepare_skill_context()</code> 判断：<br>
+    <strong>target_skill != None</strong> 且 <strong>target_skill != self._loaded_skill</strong><br>
+    → 检测到意图（如 AG_TRANS → transfer-routing），且该 skill 尚未加载
+  </div>
+
+  <div class="flow">
+    <div class="flow-step phase-2" data-step="1">
+      <div class="step-title">_detect_target_skill(messages) → "transfer-routing"</div>
+      <div class="step-detail">
+        LLM 在 Phase 1 的 model call 中输出了 <code>AG_TRANS</code>（JSON 或文本中出现）。<br>
+        第二次 model call 开始前，<code>_detect_target_skill</code> 扫描到该意图码。<br>
+        &bull; Level 1: 尝试解析 JSON → <code>payload["frames"][0]["intent_code"] == "AG_TRANS"</code><br>
+        &bull; Level 2: 文本搜索 → <code>"AG_TRANS" in content</code><br>
+        通过 <code>_intent_index["AG_TRANS"]</code> 查找到 skill name = <code>"transfer-routing"</code>
+      </div>
+    </div>
+    <div class="flow-step phase-2" data-step="2">
+      <div class="step-title">self._loaded_skill = "transfer-routing"</div>
+      <div class="step-detail">
+        更新内部状态，记录当前已加载的 skill。
+      </div>
+    </div>
+    <div class="flow-step phase-2" data-step="3">
+      <div class="step-title">_inject_skill_with_references(request, "transfer-routing")</div>
+      <div class="step-detail">
+        核心加载步骤，调用 <code>_build_skill_block()</code>：
+      </div>
+    </div>
+    <div class="flow-step phase-2" data-step="4">
+      <div class="step-title">SkillRegistry.load_skill_body("transfer-routing")</div>
+      <div class="step-detail">
+        从文件系统读取 <code>SKILL.md</code> 的 body 部分（去掉 frontmatter）。<br>
+        包含：意图边界判定逻辑（Step1~Step4）、示例、路由约束。
+      </div>
+      <div class="step-trace trace-green">skill_loaded: 加载技能: transfer-routing</div>
+    </div>
+    <div class="flow-step phase-2" data-step="5">
+      <div class="step-title">遍历 meta.references → 逐个加载 reference body</div>
+      <div class="step-detail">
+        对 frontmatter 中声明的每个 reference：<br>
+        &bull; <code>slot_filling</code> → 读取 <code>references/slot_filling.md</code> body（提槽规则）<br>
+        &bull; <code>workflow_request</code> → 读取 <code>references/workflow_request.md</code> body（API 调用方式 + 完整 URL）<br>
+        每个 reference body 格式化为 <code>### Reference: {id} — {purpose}\n\n{body}</code>
+      </div>
+      <div class="step-trace trace-green">skill_reference_loaded: 加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口)</div>
+    </div>
+    <div class="flow-step phase-2" data-step="6">
+      <div class="step-title">组装并替换 system prompt 中的 skill block</div>
+      <div class="step-detail">
+        &bull; 如果 system prompt 中已有 <code>## Loaded Skill:</code> 块 → 先截断移除<br>
+        &bull; 追加新的 skill block：<code>## Loaded Skill: transfer-routing</code> + body + references<br>
+        &bull; 调用 <code>request.override(system_message=...)</code> 替换 system prompt
+      </div>
+    </div>
+  </div>
+
+  <div class="prompt-preview">
+    <div class="pp-header">System Prompt（Phase 2 注入后 — 新增部分）</div>
+    <div class="pp-body"><span class="highlight">## Loaded Skill: transfer-routing
+
+# 掌银转账意图识别
+用于判断用户是否表达掌银转账意图...
+
+## 第一阶段：转账意图与支持范围判定
+...（意图边界逻辑 Step1~Step4）
+
+### Reference: slot_filling — 转账提槽规则
+
+# 转账提槽规则
+- payee_name：收款人姓名
+- amount：转账金额...
+（提取原则、多轮补槽规则）
+
+### Reference: workflow_request — 转账子工作流接口与参数组装说明
+
+# 转账子工作流请求组装
+workflow_api_call(method="POST",
+  url="http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+  body={...})
+（完整 URL、请求体结构、约束）</span></div>
+  </div>
+
+  <div class="decision-box">
+    <strong>Phase 2 目的：</strong>LLM 现在拥有完整的业务上下文：<br>
+    &bull; 意图边界判定规则（SKILL.md body）<br>
+    &bull; 提槽规则和必填槽位（slot_filling.md）<br>
+    &bull; 工作流 API 的完整 URL 和参数格式（workflow_request.md）<br>
+    LLM 可以按照 reference 规则进行提槽，并使用正确的 URL 调用 <code>workflow_api_call</code>。
+  </div>
+</div>
+
+<div class="arrow-down">&#x25BC;</div>
+
+<!-- ---- Phase 3 ---- -->
+<div class="section-card">
+  <span class="phase-banner p3">Phase 3 — 持续注入（同一 skill 的后续 model call）</span>
+
+  <h3>触发条件</h3>
+  <div class="decision-box">
+    <code>_prepare_skill_context()</code> 判断：<br>
+    <strong>self._loaded_skill != None</strong>（已有加载的 skill）<br>
+    且 target_skill 要么等于 _loaded_skill 要么为 None<br>
+    → 同一个 skill 上下文中的后续 model call（多轮提槽、workflow 调用等）
+  </div>
+
+  <div class="flow">
+    <div class="flow-step phase-3" data-step="1">
+      <div class="step-title">每次 model call 前重新注入 skill block</div>
+      <div class="step-detail">
+        因为 deepagent 每次 model call 都可能重组 system prompt，<br>
+        middleware 在每次 <code>wrap_model_call</code> 中调用 <code>_inject_skill_with_references()</code>，<br>
+        确保 skill body + references 始终在 system prompt 中。<br>
+        <strong>注意：</strong>这会导致 <code>skill_loaded</code> 和 <code>skill_reference_loaded</code> trace 重复出现。
+      </div>
+      <div class="step-trace trace-purple">skill_loaded: 加载技能: transfer-routing (重复)</div>
+      <div class="step-trace trace-purple">skill_reference_loaded: 加载 2 个参考文件... (重复)</div>
+    </div>
+  </div>
+
+  <div class="decision-box">
+    <strong>Phase 3 目的：</strong>保证多轮对话中 LLM 始终能看到 skill 上下文（提槽规则、API 地址）。
+    即使 deepagent 在中间步骤修改了 system prompt，skill block 也会被重新注入。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Skill 卸载与切换</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>触发条件</h3>
+  <div class="decision-box">
+    <code>_prepare_skill_context()</code> 判断：<br>
+    <strong>target_skill != None</strong> 且 <strong>target_skill != self._loaded_skill</strong> 且 <strong>self._loaded_skill != None</strong><br>
+    → 检测到新意图（如 AG_PAY_BILL），且当前已加载另一个 skill（如 transfer-routing）
+  </div>
+
+  <div class="flow">
+    <div class="flow-step phase-unload" data-step="1">
+      <div class="step-title">检测到新意图：AG_PAY_BILL → bill-payment-routing</div>
+      <div class="step-detail">
+        用户输入"帮我缴电费200元"，LLM 输出包含 <code>AG_PAY_BILL</code>。<br>
+        <code>_detect_target_skill()</code> 返回 <code>"bill-payment-routing"</code>，与当前 <code>_loaded_skill="transfer-routing"</code> 不同。
+      </div>
+    </div>
+    <div class="flow-step phase-unload" data-step="2">
+      <div class="step-title">卸载旧 skill：emit trace + 日志</div>
+      <div class="step-detail">
+        记录卸载事件。<strong>卸载的实际操作是：</strong>在下一步构建新的 system prompt 时，<br>
+        <code>_inject_skill_with_references()</code> 会检测到已有 <code>## Loaded Skill:</code> 块，<br>
+        截断该块之后的所有内容，然后追加新 skill 的内容。<br>
+        <strong>没有独立的"清除内存"步骤 — 卸载 = 替换 system prompt 中的 skill block。</strong>
+      </div>
+      <div class="step-trace trace-orange">skill_unloaded: 卸载技能: transfer-routing</div>
+    </div>
+    <div class="flow-step phase-unload" data-step="3">
+      <div class="step-title">更新 _loaded_skill = "bill-payment-routing"</div>
+      <div class="step-detail">
+        内部状态指向新 skill。
+      </div>
+    </div>
+    <div class="flow-step phase-2" data-step="4">
+      <div class="step-title">加载新 skill：_inject_skill_with_references("bill-payment-routing")</div>
+      <div class="step-detail">
+        与 Phase 2 完全相同的流程：<br>
+        &bull; <code>load_skill_body("bill-payment-routing")</code> → 读取 SKILL.md body<br>
+        &bull; 遍历 <code>meta.references</code> → 加载 reference bodies（如果有）<br>
+        &bull; 截断旧 skill block，追加新 skill block
+      </div>
+      <div class="step-trace trace-green">skill_loaded: 加载技能: bill-payment-routing</div>
+    </div>
+  </div>
+
+  <div class="prompt-preview">
+    <div class="pp-header">System Prompt（卸载 transfer-routing，加载 bill-payment-routing 后）</div>
+    <div class="pp-body">## Task Execution Constraints
+...
+
+## Available Skills (Intent Recognition)
+...
+
+## Skill Loading Protocol
+...
+
+<span class="highlight">## Loaded Skill: bill-payment-routing    ← 替换了之前的 transfer-routing
+
+# 缴费意图路由规则
+本 skill 仅用于缴费业务意图 AG_PAY_BILL...
+（意图边界、标准槽位、补槽规则、任务规划）
+
+（注：bill-payment-routing 没有 references 目录，所以没有 Reference 块）</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. SkillFileMiddleware — 虚拟文件读取</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <div class="decision-box">
+    <strong>作用：</strong>拦截 LLM 发出的 <code>read_file</code> tool call，当路径以 <code>/skills/</code> 开头时，
+    从 SkillRegistry 加载内容而非访问真实文件系统。让 skill 文件作为虚拟覆盖层存在。
+  </div>
+
+  <div class="flow">
+    <div class="flow-step phase-2" data-step="1">
+      <div class="step-title">LLM 发出 read_file("/skills/transfer-routing/references/workflow_request.md")</div>
+      <div class="step-detail">
+        LLM 根据 Skill Loading Protocol 指令，主动调用 <code>read_file</code> 读取 reference 文件。
+      </div>
+    </div>
+    <div class="flow-step phase-2" data-step="2">
+      <div class="step-title">SkillFileMiddleware.wrap_tool_call() 拦截</div>
+      <div class="step-detail">
+        &bull; 检查 tool_name == "read_file" ？是<br>
+        &bull; 提取 file_path 参数<br>
+        &bull; 标准化路径 → <code>"/skills/transfer-routing/references/workflow_request.md"</code><br>
+        &bull; 路径以 <code>/skills/</code> 开头？ 是 → 进入虚拟解析
+      </div>
+    </div>
+    <div class="flow-step phase-2" data-step="3">
+      <div class="step-title">_resolve_virtual_path() → 从 Registry 加载</div>
+      <div class="step-detail">
+        &bull; 解析路径：<code>["skills", "transfer-routing", "references", "workflow_request.md"]</code><br>
+        &bull; skill_dir_name = <code>"transfer-routing"</code> → 匹配 <code>meta.skill_dir.name</code><br>
+        &bull; file_part = <code>"references/workflow_request.md"</code> → 匹配 <code>ref.relative_path</code><br>
+        &bull; 调用 <code>SkillRegistry.load_reference("transfer-routing", "workflow_request")</code><br>
+        &bull; 返回 reference body 作为 ToolMessage content
+      </div>
+      <div class="step-trace trace-green">skill_file_read: 读取: /skills/transfer-routing/references/workflow_request.md</div>
+    </div>
+    <div class="flow-step phase-2" data-step="4">
+      <div class="step-title">路径不存在？返回可用文件列表</div>
+      <div class="step-detail">
+        如果 LLM 请求的路径在 <code>/skills/</code> 下但不匹配任何已注册的文件：<br>
+        &bull; 调用 <code>virtual_file_listing()</code> 获取所有已注册 skill 的虚拟路径<br>
+        &bull; 返回 "File not found" + 可用文件列表，帮助 LLM 自我纠正
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. 完整生命周期时序图（多任务场景）</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>场景：用户发"给张三转账500元，再帮我缴电费200元"</h3>
+  <p style="color:var(--muted);font-size:13px;margin:8px 0 16px;">
+    两个意图 → 任务规划（2 个 task）→ 串行执行 → skill 切换
+  </p>
+
+  <div class="flow">
+    <div class="flow-step phase-1" data-step="1">
+      <div class="step-title">Model Call #1 — Phase 1：元数据注入</div>
+      <div class="step-detail">
+        注入 2 个技能摘要 + Skill Loading Protocol。<br>
+        LLM 识别出两个意图：AG_TRANS（转账）+ AG_PAY_BILL（缴费）。<br>
+        LLM 创建 task_list，current_task = AG_TRANS。
+      </div>
+      <div class="step-trace trace-blue">skill_metadata_injected</div>
+      <div class="step-trace trace-blue">task_constraints_injected</div>
+    </div>
+
+    <div class="flow-step phase-2" data-step="2">
+      <div class="step-title">Model Call #2 — Phase 2：加载 transfer-routing</div>
+      <div class="step-detail">
+        <code>_detect_target_skill()</code> 检测到 AG_TRANS → transfer-routing。<br>
+        加载 SKILL.md body + slot_filling.md + workflow_request.md。<br>
+        LLM 按 slot_filling 规则提取槽位：payee_name=张三, amount=500。
+      </div>
+      <div class="step-trace trace-green">skill_loaded: transfer-routing</div>
+      <div class="step-trace trace-green">skill_reference_loaded: slot_filling, workflow_request</div>
+    </div>
+
+    <div class="flow-step phase-3" data-step="3">
+      <div class="step-title">Model Call #3 — Phase 3：持续注入，调用 workflow</div>
+      <div class="step-detail">
+        skill block 重新注入。<br>
+        LLM 使用 workflow_request.md 中的完整 URL 调用 <code>workflow_api_call</code>。
+      </div>
+      <div class="step-trace trace-purple">skill_loaded: transfer-routing (重复)</div>
+      <div class="step-trace trace-green">workflow_call_started</div>
+      <div class="step-trace trace-green">workflow_call_completed</div>
+    </div>
+
+    <div class="flow-step phase-complete" data-step="4">
+      <div class="step-title">CompletionGate 触发 → 等待前端确认</div>
+      <div class="step-detail">
+        <code>CompletionGateMiddleware</code> 检测到 <code>workflow_api_call</code> 的 ToolMessage → 终止 agent 循环。<br>
+        返回 <code>completion_state=1, status=waiting_assistant_completion</code>。<br>
+        前端点击"模拟完成当前任务" → 调用 <code>/api/v1/task/completion</code> (completionSignal=1)。
+      </div>
+      <div class="step-trace trace-red">completion_gate_triggered</div>
+    </div>
+
+    <div class="flow-step phase-complete" data-step="5">
+      <div class="step-title">任务完成 → completion_state=2, status=completed</div>
+      <div class="step-detail">
+        AG_TRANS 任务标记为 completed。前端发送"继续"消息推进下一个任务。
+      </div>
+    </div>
+
+    <div class="flow-step phase-unload" data-step="6">
+      <div class="step-title">Model Call #4 — 卸载 transfer-routing，加载 bill-payment-routing</div>
+      <div class="step-detail">
+        用户发送"继续"，LLM 推进 current_task 到 AG_PAY_BILL。<br>
+        <code>_detect_target_skill()</code> 检测到 AG_PAY_BILL → bill-payment-routing。<br>
+        卸载 transfer-routing 的 skill block，加载 bill-payment-routing。
+      </div>
+      <div class="step-trace trace-orange">skill_unloaded: transfer-routing</div>
+      <div class="step-trace trace-green">skill_loaded: bill-payment-routing</div>
+    </div>
+
+    <div class="flow-step phase-2" data-step="7">
+      <div class="step-title">缴费流程：提槽 → workflow → CompletionGate → 完成</div>
+      <div class="step-detail">
+        与转账流程相同：按 bill-payment-routing 的规则提槽 (payment_item=电费, amount=200)，<br>
+        调用缴费 workflow，CompletionGate 触发，前端确认完成。<br>
+        所有任务完成。
+      </div>
+      <div class="step-trace trace-red">completion_gate_triggered</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>7. 核心代码映射</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <table>
+    <tr><th>阶段</th><th>方法</th><th>文件</th><th>行为</th></tr>
+    <tr>
+      <td>启动</td>
+      <td><code>SkillRegistry.from_roots()</code></td>
+      <td>skill_registry.py</td>
+      <td>扫描 skill 目录，解析 frontmatter，构建 _skills + _intent_index</td>
+    </tr>
+    <tr>
+      <td>Phase 1</td>
+      <td><code>_inject_metadata_summary()</code></td>
+      <td>middleware.py</td>
+      <td>调用 <code>all_metadata_summary()</code>，生成技能列表 + Skill Loading Protocol 指令注入 system prompt</td>
+    </tr>
+    <tr>
+      <td>意图检测</td>
+      <td><code>_detect_target_skill()</code></td>
+      <td>middleware.py</td>
+      <td>两级扫描：JSON intent_code → 文本扫描注册的 intent codes</td>
+    </tr>
+    <tr>
+      <td>意图查找</td>
+      <td><code>SkillRegistry.find_by_intent()</code></td>
+      <td>skill_registry.py</td>
+      <td>intent_code → _intent_index → skill_name → SkillMeta</td>
+    </tr>
+    <tr>
+      <td>Phase 2</td>
+      <td><code>_inject_skill_with_references()</code></td>
+      <td>middleware.py</td>
+      <td>调用 <code>_build_skill_block()</code>，截断旧 block，追加新 skill block 到 system prompt</td>
+    </tr>
+    <tr>
+      <td>Body 加载</td>
+      <td><code>SkillRegistry.load_skill_body()</code></td>
+      <td>skill_registry.py</td>
+      <td>从文件系统读取 SKILL.md，split frontmatter，返回 body</td>
+    </tr>
+    <tr>
+      <td>Reference 加载</td>
+      <td><code>SkillRegistry.load_reference()</code></td>
+      <td>skill_registry.py</td>
+      <td>根据 ref_id 找到 SkillReferenceMeta.relative_path，读取文件，返回 body</td>
+    </tr>
+    <tr>
+      <td>Phase 3</td>
+      <td><code>_inject_skill_with_references()</code></td>
+      <td>middleware.py</td>
+      <td>每次 model call 重新注入（确保 skill 上下文不丢失）</td>
+    </tr>
+    <tr>
+      <td>卸载</td>
+      <td><code>_prepare_skill_context()</code></td>
+      <td>middleware.py</td>
+      <td>target_skill 变化 → emit skill_unloaded → 更新 _loaded_skill → 加载新 skill</td>
+    </tr>
+    <tr>
+      <td>虚拟文件</td>
+      <td><code>SkillFileMiddleware._maybe_read_skill_file()</code></td>
+      <td>middleware.py</td>
+      <td>拦截 read_file(/skills/...)，从 Registry 加载内容而非文件系统</td>
+    </tr>
+    <tr>
+      <td>虚拟路径解析</td>
+      <td><code>_resolve_virtual_path()</code></td>
+      <td>middleware.py</td>
+      <td>解析 /skills/{dir}/{file} → 匹配 meta.skill_dir.name + ref.relative_path</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>8. 状态机总览</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>SkillLifecycleMiddleware 内部状态转换</h3>
+
+  <table>
+    <tr><th>当前状态</th><th>_detect_target_skill 结果</th><th>动作</th><th>新状态</th></tr>
+    <tr>
+      <td><code>_loaded_skill = None</code></td>
+      <td><code>None</code></td>
+      <td>Phase 1: _inject_metadata_summary()</td>
+      <td><code>_loaded_skill = None</code></td>
+    </tr>
+    <tr>
+      <td><code>_loaded_skill = None</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>Phase 2: _inject_skill_with_references("transfer-routing")</td>
+      <td><code>_loaded_skill = "transfer-routing"</code></td>
+    </tr>
+    <tr>
+      <td><code>_loaded_skill = "transfer-routing"</code></td>
+      <td><code>"transfer-routing"</code> 或 <code>None</code></td>
+      <td>Phase 3: 重新注入 transfer-routing skill block</td>
+      <td><code>_loaded_skill = "transfer-routing"</code>（不变）</td>
+    </tr>
+    <tr>
+      <td><code>_loaded_skill = "transfer-routing"</code></td>
+      <td><code>"bill-payment-routing"</code></td>
+      <td>卸载: emit skill_unloaded → Phase 2: 加载 bill-payment-routing</td>
+      <td><code>_loaded_skill = "bill-payment-routing"</code></td>
+    </tr>
+  </table>
+
+  <h3>_detect_target_skill 检测优先级</h3>
+  <table>
+    <tr><th>级别</th><th>方式</th><th>说明</th></tr>
+    <tr>
+      <td>Level 1</td>
+      <td>JSON <code>intent_code</code></td>
+      <td>解析 LLM 输出中的结构化 JSON：<code>frames[].intent_code</code>, <code>current_task.intent_code</code>, 顶层 <code>intent_code</code></td>
+    </tr>
+    <tr>
+      <td>Level 2</td>
+      <td>文本扫描</td>
+      <td>在 LLM 输出文本中搜索 <code>_intent_index</code> 中所有已注册的 intent_code 字符串</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>9. 设计约束与边界</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <table>
+    <tr><th>约束</th><th>说明</th></tr>
+    <tr>
+      <td>一个 skill 一个 intent_code</td>
+      <td><code>_validate_skill_meta()</code> 强制：<code>len(intent_codes) <= 1</code></td>
+    </tr>
+    <tr>
+      <td>intent_code 全局唯一</td>
+      <td>同一个 intent_code 不能被两个 skill 声明，否则启动时抛 ValueError</td>
+    </tr>
+    <tr>
+      <td>业务逻辑在 skills/，不在框架</td>
+      <td>middleware 不包含任何 intent code、slot name、API URL。全部来自 skill 文件</td>
+    </tr>
+    <tr>
+      <td>卸载 = system prompt 替换</td>
+      <td>没有独立的内存清理步骤。旧 skill block 被新 skill block 截断替换</td>
+    </tr>
+    <tr>
+      <td>Reference 按需加载</td>
+      <td>启动时只解析 reference 的元数据（id, path, purpose），body 在 Phase 2 才读取</td>
+    </tr>
+    <tr>
+      <td>Phase 3 重复注入</td>
+      <td>每次 model call 都重新注入 skill block，导致 trace 重复。功能正确，cosmetic 问题</td>
+    </tr>
+    <tr>
+      <td>SkillFileMiddleware 独立运作</td>
+      <td>即使 SkillLifecycleMiddleware 已经注入了 reference 内容，LLM 仍可通过 read_file 读取 — 两条路径并存</td>
+    </tr>
+  </table>
+</div>
+
+<div style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">
+  Intent Router Harness &mdash; Skill Lifecycle Diagram &mdash; Generated 2026-05-10
+</div>
+
+</body>
+</html>
