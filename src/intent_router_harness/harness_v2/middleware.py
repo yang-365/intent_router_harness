@@ -33,6 +33,10 @@ from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_onc
 
 logger = logging.getLogger(__name__)
 
+# Shared prefix for URL-rejection messages returned by WorkflowGatewayMiddleware.
+# CompletionGateMiddleware uses this to distinguish rejections from real results.
+_WORKFLOW_URL_REJECTION_PREFIX = "Error: URL"
+
 
 def build_harness_middleware(
     *,
@@ -255,7 +259,7 @@ def build_harness_middleware(
             if getattr(msg, "name", "") != "workflow_api_call":
                 return False
             content = getattr(msg, "content", "")
-            return not (isinstance(content, str) and content.startswith("Error: URL"))
+            return not (isinstance(content, str) and content.startswith(_WORKFLOW_URL_REJECTION_PREFIX))
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
@@ -350,11 +354,17 @@ def build_harness_middleware(
                 skill_count=len(self._registry.names()),
                 skill_names=list(self._registry.names()),
             )
+            tool_names = self._get_tool_names()
             instruction = (
                 "\n\n## Skill Loading Protocol\n"
-                "识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，"
-                "了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。"
-                "不要编造 workflow URL，必须使用 reference 文件中的完整地址。"
+                "After identifying user intent, you MUST first read the matching "
+                "skill's reference files (via {read_tool}) to learn the slot-filling "
+                "rules and API invocation details BEFORE calling {workflow_tool}.\n"
+                "Do NOT fabricate workflow URLs — use only the exact addresses "
+                "found in the reference files."
+            ).format(
+                read_tool=tool_names["read_file"],
+                workflow_tool=tool_names["workflow_api_call"],
             )
             system_message = SystemMessage(
                 content=f"{existing_text}\n\n{summary}{instruction}" if existing_text else f"{summary}{instruction}"
@@ -445,7 +455,7 @@ def build_harness_middleware(
                     except json.JSONDecodeError:
                         pass
 
-                # Scan plain-text for known intent codes (e.g., "AG_TRANS")
+                # Scan plain-text for known intent codes
                 if self._registry is not None:
                     for intent_code in self._registry.intent_codes():
                         if intent_code in content:
@@ -453,17 +463,38 @@ def build_harness_middleware(
                             if meta:
                                 return meta.name
 
-                # Check tool calls for skill-related read_file paths
+                # Check tool calls for skill-related file read paths
                 tool_calls = getattr(msg, "tool_calls", None)
                 if tool_calls:
                     for tc in tool_calls:
                         args = tc.get("args", {}) if isinstance(tc, dict) else {}
-                        file_path = args.get("file_name") or args.get("path") or args.get("file_path") or ""
-                        if "/skills/" in file_path and self._registry is not None:
+                        file_path = self._extract_file_path_from_args(args)
+                        if file_path and self._registry is not None:
                             for name in self._registry.names():
                                 if name in file_path:
                                     return name
             return None
+
+        @staticmethod
+        def _extract_file_path_from_args(args: dict[str, Any]) -> str:
+            """Extract file path from tool call args, checking common param names."""
+            for key in ("file_path", "path", "file_name"):
+                val = args.get(key)
+                if val:
+                    return str(val)
+            return ""
+
+        @staticmethod
+        def _get_tool_names() -> dict[str, str]:
+            """Return canonical tool names used by the deepagent runtime.
+
+            Centralised here so prompt templates and detection logic
+            stay in sync if tool names change.
+            """
+            return {
+                "read_file": "read_file",
+                "workflow_api_call": "workflow_api_call",
+            }
 
         def _extract_skill_from_payload(self, payload: dict[str, Any]) -> str | None:
             """Extract skill name from protocol JSON — business-agnostic."""
@@ -705,7 +736,7 @@ def build_harness_middleware(
             )
             return ToolMessage(
                 content=(
-                    f"Error: URL '{url}' is not in the allowed list.\n"
+                    f"{_WORKFLOW_URL_REJECTION_PREFIX} '{url}' is not in the allowed list.\n"
                     f"Allowed URLs: {allowed_list}\n"
                     "Please use one of the allowed URLs from the skill's workflow_request reference."
                 ),
