@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow 工具调用与处理完整流程</title>
+<style>
+  :root {
+    --bg: #f8f9fb; --surface: #fff; --border: #dce1e8;
+    --text: #1a1d23; --muted: #5c6370;
+    --accent: #3b82f6; --accent-light: #dbeafe;
+    --green: #22c55e; --green-light: #dcfce7;
+    --orange: #f97316; --orange-light: #ffedd5;
+    --red: #ef4444; --red-light: #fee2e2;
+    --purple: #8b5cf6; --purple-light: #ede9fe;
+    --teal: #14b8a6; --teal-light: #ccfbf1;
+    --indigo: #6366f1; --indigo-light: #e0e7ff;
+    --yellow: #eab308; --yellow-light: #fef9c3;
+    --code-bg: #f1f3f5; --mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.6; padding: 20px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  h1 small { font-size: 14px; color: var(--muted); font-weight: 400; }
+  h2 { font-size: 20px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--accent); }
+  p { margin: 6px 0; }
+  code { font-family: var(--mono); font-size: 13px; background: var(--code-bg); padding: 2px 5px; border-radius: 3px; }
+  pre, .step-code { font-family: var(--mono); font-size: 12px; background: var(--code-bg);
+         padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre; margin: 8px 0; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+  th { background: var(--accent-light); font-weight: 600; }
+  .section-card { background: var(--surface); border: 1px solid var(--border);
+                  border-radius: 8px; padding: 20px; margin: 12px 0; }
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 12px 0; }
+  .flow-step { border-left: 3px solid var(--border); padding: 12px 16px; position: relative; }
+  .flow-step::before { content: attr(data-step); position: absolute; left: -14px; top: 12px;
+                       width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+                       color: #fff; font-size: 12px; font-weight: 700; display: flex;
+                       align-items: center; justify-content: center; }
+  .flow-step.phase-tool   { border-left-color: var(--accent); }
+  .flow-step.phase-mw     { border-left-color: var(--purple); }
+  .flow-step.phase-mw::before  { background: var(--purple); }
+  .flow-step.phase-http   { border-left-color: var(--teal); }
+  .flow-step.phase-http::before { background: var(--teal); }
+  .flow-step.phase-parse  { border-left-color: var(--green); }
+  .flow-step.phase-parse::before { background: var(--green); }
+  .flow-step.phase-gate   { border-left-color: var(--orange); }
+  .flow-step.phase-gate::before { background: var(--orange); }
+  .flow-step.phase-err    { border-left-color: var(--red); }
+  .flow-step.phase-err::before  { background: var(--red); }
+  .flow-step.phase-output { border-left-color: var(--indigo); }
+  .flow-step.phase-output::before { background: var(--indigo); }
+  .step-title { font-weight: 600; font-size: 14px; }
+  .step-detail { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .step-trace { display: inline-block; margin-top: 6px; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-family: var(--mono); }
+  .trace-blue   { background: var(--accent-light); color: var(--accent); }
+  .trace-green  { background: var(--green-light); color: #15803d; }
+  .trace-orange { background: var(--orange-light); color: #c2410c; }
+  .trace-red    { background: var(--red-light); color: var(--red); }
+  .trace-purple { background: var(--purple-light); color: var(--purple); }
+  .trace-teal   { background: var(--teal-light); color: #0f766e; }
+  .decision-box { background: var(--yellow-light); border: 1px solid #fde68a;
+                  border-radius: 6px; padding: 12px 16px; margin: 12px 0; font-size: 13px; }
+  .arrow-down { text-align: center; font-size: 24px; color: var(--muted); margin: 4px 0; }
+  .highlight { background: var(--accent-light); padding: 2px 4px; border-radius: 3px; }
+  .err-highlight { background: var(--red-light); padding: 2px 4px; border-radius: 3px; }
+  .prompt-preview { background: var(--code-bg); border-radius: 6px; margin: 12px 0; overflow: hidden; }
+  .pp-header { background: var(--accent); color: #fff; padding: 6px 12px; font-size: 13px; font-weight: 600; }
+  .pp-body { padding: 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; line-height: 1.5; }
+  .split-box { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+  .split-box > div { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  @media (max-width: 700px) { .split-box { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Workflow 工具调用与处理完整流程
+  <br><small>intent_router_harness — 从 LLM 发出 function call 到前端收到结果的每一步</small>
+</h1>
+
+<!-- ============================================================ -->
+<h2>1. 工具注册与初始化</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>1.1 workflow_api_call 工具创建</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-tool" data-step="1">
+      <div class="step-title">agent.py: build_agent() 创建工具</div>
+      <div class="step-detail">
+        <code>workflow_tool = create_workflow_tool()</code><br>
+        创建一个 LangChain <code>StructuredTool</code>，注册到 deepagent runtime。
+      </div>
+    </div>
+    <div class="flow-step phase-tool" data-step="2">
+      <div class="step-title">workflow.py: create_workflow_tool() 定义 schema</div>
+      <div class="step-detail">
+        工具名：<code>"workflow_api_call"</code><br>
+        输入 schema（Pydantic BaseModel）：
+      </div>
+      <div class="step-code">class WorkflowApiCallInput(BaseModel):
+    method: str = Field(default="POST", description="HTTP method")
+    url: str = Field(description="Full absolute http(s) URL of the workflow SSE endpoint")
+    body: dict[str, Any] = Field(default_factory=dict, description="JSON body to POST")</div>
+    </div>
+    <div class="flow-step phase-tool" data-step="3">
+      <div class="step-title">agent.py: 注册到 deepagent</div>
+      <div class="step-detail">
+        <code>create_deep_agent(tools=[workflow_tool], middleware=harness_mw, ...)</code><br>
+        deepagent runtime 将工具 schema 暴露给 LLM，LLM 在 system prompt 中能看到工具的 name + description + 参数定义。
+      </div>
+    </div>
+  </div>
+
+  <h3>1.2 Middleware 链注册顺序</h3>
+
+  <p style="font-size:13px;color:var(--muted);">
+    与 <code>workflow_api_call</code> 相关的 middleware（按执行顺序）：
+  </p>
+
+  <table>
+    <tr><th>#</th><th>Middleware</th><th>相关 Hook</th><th>对 workflow 的作用</th></tr>
+    <tr>
+      <td>3</td>
+      <td><code>CompletionGateMiddleware</code></td>
+      <td><code>before_model</code></td>
+      <td>在 model call 前检查：消息中是否已有 <code>workflow_api_call</code> 的 ToolMessage → 如果有，终止循环</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><code>SkillFileMiddleware</code></td>
+      <td><code>wrap_tool_call</code></td>
+      <td>拦截 <code>read_file</code> 工具调用（不影响 <code>workflow_api_call</code>，但加载 reference 内容让 LLM 获得正确 URL）</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><code>WorkflowGatewayMiddleware</code></td>
+      <td><code>wrap_tool_call</code></td>
+      <td>拦截 <code>workflow_api_call</code>：URL 白名单校验 → before hooks → 执行 → after hooks → trace</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. LLM 发出 workflow_api_call — 触发条件</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>LLM 怎么知道要调用 workflow_api_call？</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-tool" data-step="1">
+      <div class="step-title">Step 1: Skill reference 提供了 URL 和调用方式</div>
+      <div class="step-detail">
+        <code>workflow_request.md</code> 中明确写了：<br>
+        - 工具名：<code>workflow_api_call</code><br>
+        - URL：<code>http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool</code><br>
+        - body 格式：<code>{ session_id, txt, stream, config_variables }</code><br>
+        - 调用时机：<code>AG_TRANS</code> 槽位齐全且 <code>executionMode=execute</code> 时
+      </div>
+    </div>
+    <div class="flow-step phase-tool" data-step="2">
+      <div class="step-title">Step 2: Skill Loading Protocol 指令引导</div>
+      <div class="step-detail">
+        SkillLifecycleMiddleware 在 metadata summary 中注入了指令：<br>
+        <em>"识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，<br>
+        了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。<br>
+        不要编造 workflow URL，必须使用 reference 文件中的完整地址。"</em>
+      </div>
+    </div>
+    <div class="flow-step phase-tool" data-step="3">
+      <div class="step-title">Step 3: LLM 发出 function call</div>
+      <div class="step-detail">
+        LLM 根据 reference 中的 URL 和 body 格式，生成 tool_call：
+      </div>
+      <div class="step-code">tool_calls: [{
+    "name": "workflow_api_call",
+    "args": {
+        "method": "POST",
+        "url": "http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+        "body": {
+            "session_id": "test_002",
+            "txt": "给张三转账500元",
+            "stream": true,
+            "config_variables": [
+                {"name": "custID", "value": "C0001"},
+                {"name": "sessionID", "value": "test_002"},
+                {"name": "slots_data", "value": "{\"payee_name\":\"张三\",\"amount\":500}"}
+            ]
+        }
+    }
+}]</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Middleware 拦截链 — wrap_tool_call 执行顺序</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>3.1 deepagent runtime 分发 tool call</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+    deepagent runtime 收到 LLM 的 tool_call 后，按 middleware 注册顺序依次调用 <code>wrap_tool_call(request, handler)</code>。<br>
+    每个 middleware 可以选择：拦截（返回自定义结果）或透传（调用 <code>handler(request)</code>）。
+  </p>
+
+  <div class="flow">
+    <div class="flow-step phase-mw" data-step="1">
+      <div class="step-title">SkillFileMiddleware.wrap_tool_call()</div>
+      <div class="step-detail">
+        检查 tool_name：<code>"workflow_api_call" != "read_file"</code> → <strong>跳过</strong>，直接 <code>handler(request)</code> 透传到下一层。<br>
+        （如果是 <code>read_file("/skills/...")</code> 调用，会在这里被拦截返回 skill 文件内容）
+      </div>
+    </div>
+    <div class="flow-step phase-mw" data-step="2">
+      <div class="step-title">WorkflowGatewayMiddleware.wrap_tool_call() — 入口</div>
+      <div class="step-detail">
+        检查 tool_name：<code>"workflow_api_call" == "workflow_api_call"</code> → <strong>匹配！进入 workflow 处理流程。</strong>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. WorkflowGatewayMiddleware — 详细执行流程</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>4.1 URL 白名单校验</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-mw" data-step="1">
+      <div class="step-title">_check_url(request) — 提取 URL 并校验</div>
+      <div class="step-detail">
+        从 tool_call args 中提取 <code>url</code> 字段，检查是否以白名单中的任何前缀开头。
+      </div>
+      <div class="step-code">args = _tool_args(request)
+url = str(args.get("url", ""))
+# self._allowed = {
+#     "http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+#     "http://127.0.0.1:9877/agent-api/workflow-agent-bill/chatabc/use_as_tool",
+#     "http://127.0.0.1:9877/agent-api/workflow-agent-payee/chatabc/use_as_tool",
+# }
+if any(url.startswith(prefix) for prefix in self._allowed):
+    # → 通过！继续执行
+else:
+    # → 拒绝！返回错误 ToolMessage</div>
+    </div>
+  </div>
+
+  <div class="split-box">
+    <div style="border-left: 3px solid var(--green);">
+      <h3 style="color:var(--green);">✓ URL 在白名单中</h3>
+      <div class="flow">
+        <div class="flow-step phase-mw" data-step="2">
+          <div class="step-title">emit trace: workflow_call_started</div>
+          <div class="step-detail">
+            记录请求信息：method、url、body
+          </div>
+          <div class="step-trace trace-teal">workflow_call_started: method=POST url=http://127.0.0.1:9877/...</div>
+        </div>
+        <div class="flow-step phase-mw" data-step="3">
+          <div class="step-title">_run_before_hooks(request)</div>
+          <div class="step-detail">
+            执行所有注册的 before hooks（可选扩展点）
+          </div>
+        </div>
+        <div class="flow-step phase-mw" data-step="4">
+          <div class="step-title">result = handler(request) → 调用实际工具函数</div>
+          <div class="step-detail">
+            <code>handler</code> 最终调用 <code>workflow_api_call(method, url, body)</code>（workflow.py 中定义的函数）<br>
+            → 详见第 5 节 "HTTP 请求与 SSE 解析"
+          </div>
+        </div>
+        <div class="flow-step phase-mw" data-step="5">
+          <div class="step-title">_run_after_hooks(request, result)</div>
+          <div class="step-detail">
+            执行所有注册的 after hooks（可选扩展点，异常不中断主流程）
+          </div>
+        </div>
+        <div class="flow-step phase-mw" data-step="6">
+          <div class="step-title">emit trace: workflow_call_completed</div>
+          <div class="step-detail">
+            记录返回结果长度和预览（前 500 字符）
+          </div>
+          <div class="step-trace trace-green">workflow_call_completed: 返回结果长度: 342 字符</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="border-left: 3px solid var(--red);">
+      <h3 style="color:var(--red);">✗ URL 不在白名单中</h3>
+      <div class="flow">
+        <div class="flow-step phase-err" data-step="2">
+          <div class="step-title">emit trace: workflow_url_rejected</div>
+          <div class="step-detail">
+            记录被拒绝的 URL 和允许的 URL 列表
+          </div>
+          <div class="step-trace trace-red">workflow_url_rejected: URL不在白名单: https://workflow.example.com/transfer</div>
+        </div>
+        <div class="flow-step phase-err" data-step="3">
+          <div class="step-title">返回拒绝 ToolMessage — 不调用 handler</div>
+          <div class="step-detail">
+            直接构造 <code>ToolMessage</code> 返回给 LLM，内容为错误说明 + 允许的 URL 列表。<br>
+            <strong>工具函数不会被调用，不发送 HTTP 请求。</strong>
+          </div>
+          <div class="step-code">ToolMessage(
+    content="Error: URL 'https://...' is not in the allowed list.\n"
+            "Allowed URLs: [...]\n"
+            "Please use one of the allowed URLs from the skill's workflow_request reference.",
+    tool_call_id=_tool_call_id(request),
+    name="workflow_api_call",
+)</div>
+        </div>
+      </div>
+      <div class="decision-box" style="margin-top:8px;">
+        <strong>注意：</strong>URL 被拒绝后返回的 ToolMessage 的 <code>name="workflow_api_call"</code>，<br>
+        CompletionGateMiddleware 会将其视为 workflow 结果 → <strong>触发完成门控</strong>。<br>
+        白名单拒绝也算任务完成（前端收到 <code>completion_state=1</code>）。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>5. HTTP 请求与 SSE 响应解析</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>5.1 workflow_api_call() 函数执行</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-http" data-step="1">
+      <div class="step-title">日志记录请求</div>
+      <div class="step-detail">
+        <code>logger.info("workflow_api_call method=%s url=%s body=%s", ...)</code>
+      </div>
+    </div>
+    <div class="flow-step phase-http" data-step="2">
+      <div class="step-title">调用 _execute_workflow_sse(method, url, body)</div>
+      <div class="step-detail">
+        使用 <code>httpx.Client</code> 发送 HTTP 流式请求。
+      </div>
+    </div>
+  </div>
+
+  <h3>5.2 _execute_workflow_sse() — SSE 流解析</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-http" data-step="1">
+      <div class="step-title">发送 HTTP 请求（流式）</div>
+      <div class="step-detail">
+        <code>httpx.Client.stream(method.upper(), url, json=body)</code><br>
+        发送带 JSON body 的 HTTP 请求，以流式方式读取响应。
+      </div>
+      <div class="step-code">with httpx.Client(timeout=60.0) as client:
+    with client.stream("POST", url, json=body) as response:
+        response.raise_for_status()
+        # 逐 chunk 读取...</div>
+    </div>
+    <div class="flow-step phase-http" data-step="2">
+      <div class="step-title">逐 chunk 累积 + SSE 分帧</div>
+      <div class="step-detail">
+        每收到一个 chunk，累积到 buffer。遇到 <code>\n\n</code>（空行分隔符）时切分为独立 SSE event。<br>
+        每个 event 交给 <code>_parse_sse_event()</code> 解析。
+      </div>
+      <div class="step-code">buffer = ""
+for chunk in response.iter_text():
+    raw_text += chunk      # 保存原始响应（用于 fallback）
+    buffer += chunk
+    while "\n\n" in buffer:
+        event_text, buffer = buffer.split("\n\n", 1)
+        parsed = _parse_sse_event(event_text)
+        if parsed is not None:
+            events.append(parsed)</div>
+    </div>
+    <div class="flow-step phase-http" data-step="3">
+      <div class="step-title">_parse_sse_event() — 解析单个 SSE event</div>
+      <div class="step-detail">
+        提取 <code>data:</code> 行的内容，合并后尝试 JSON 解析。
+      </div>
+      <div class="step-code"># 输入：
+# "event:message\ndata:{\"content\":\"\",\"additional_kwargs\":{\"node_output\":{...}}}"
+#
+# 提取 data 行：
+#   "{\"content\":\"\",\"additional_kwargs\":{\"node_output\":{...}}}"
+#
+# JSON 解析得到 dict</div>
+    </div>
+  </div>
+
+  <h3>5.3 Workflow 服务端 SSE 响应格式（deepagent runtime）</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">
+    deepagent workflow runtime 的 SSE 响应格式如下（mock_workflow_server 模拟了相同格式）：
+  </p>
+
+  <div class="prompt-preview">
+    <div class="pp-header">SSE Stream（每个 event 由 \n\n 分隔）</div>
+    <div class="pp-body">event:message
+data:{"content":"","additional_kwargs":{"node_id":"mock_0","node_title":"Mock节点0","<span class="highlight">node_output</span>":{"mock":"transfer-start","received":{...}},"timestamp":"2026-05-08 00:00:00"},"response_metadata":{},"type":"ai","name":null,"id":null,"tool_calls":[],"invalid_tool_calls":[],"usage_metadata":null}
+
+event:message
+data:{"content":"","additional_kwargs":{"node_id":"mock_1","node_title":"Mock节点1","<span class="highlight">node_output</span>":{"mock":"transfer-check","result":"transfer_ready"}},...}
+
+event:message
+data:{"content":"","additional_kwargs":{"node_id":"mock_2","node_title":"Mock节点2","<span class="highlight">node_output</span>":{"output":"mock-transfer-done","exception":null}},...}
+
+event:done
+data:[DONE]</div>
+  </div>
+
+  <div class="decision-box">
+    <strong>关键：</strong><code>node_output</code> 嵌套在 <code>additional_kwargs</code> 内部，不在顶层。<br>
+    解析器必须从两个位置查找：<code>event["node_output"]</code> 或 <code>event["additional_kwargs"]["node_output"]</code>。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. 响应解析 — 三级 Fallback</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>解析后的 events 列表 → 提取 node_output</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-parse" data-step="1">
+      <div class="step-title">检查 1：是否有 SSE events？</div>
+      <div class="step-detail">
+        如果 <code>events</code> 列表为空（服务端没有返回有效的 SSE 帧）<br>
+        → <strong>Fallback A</strong>：返回原始响应文本
+      </div>
+      <div class="step-code">if not events:
+    logger.warning("workflow returned no SSE events, returning raw payload")
+    return _raw_output(raw_text)
+    # → {"output": raw_text} 或 {"output": json.loads(raw_text)}</div>
+    </div>
+    <div class="flow-step phase-parse" data-step="2">
+      <div class="step-title">检查 2：最后一个 event 是否包含 node_output？</div>
+      <div class="step-detail">
+        取 <code>events[-1]</code>（最后一个 SSE event），通过 <code>_extract_node_output()</code> 查找：<br>
+        ① <code>event["node_output"]</code>（顶层）<br>
+        ② <code>event["additional_kwargs"]["node_output"]</code>（嵌套在 additional_kwargs 内）<br>
+        如果找到 → <strong>正常返回</strong>
+      </div>
+      <div class="step-code">last = events[-1]
+node_output = _extract_node_output(last)
+if node_output is not None:
+    return {
+        "node_output": node_output,    # 最终业务结果
+        "event_count": len(events),     # event 总数
+        "events": events,               # 完整 event 列表
+    }</div>
+    </div>
+    <div class="flow-step phase-parse" data-step="3">
+      <div class="step-title">检查 3：有 events 但没有 node_output</div>
+      <div class="step-detail">
+        SSE 帧存在但没有 <code>node_output</code> → <strong>Fallback B</strong>：返回 raw events
+      </div>
+      <div class="step-code">logger.warning("workflow final event has no node_output, returning raw events")
+return {
+    "output": events[-1] if len(events) == 1 else events,  # 原始 events
+    "event_count": len(events),
+    "events": events,
+}</div>
+    </div>
+  </div>
+
+  <h3>_extract_node_output() — 双位置查找</h3>
+
+  <div class="step-code">def _extract_node_output(event: dict[str, Any]) -> Any | None:
+    """The deepagent workflow runtime may place node_output either at
+    the top level of the event or nested under additional_kwargs."""
+    if "node_output" in event:
+        return event["node_output"]            # 位置 1：顶层
+    additional = event.get("additional_kwargs")
+    if isinstance(additional, dict) and "node_output" in additional:
+        return additional["node_output"]       # 位置 2：嵌套
+    return None</div>
+
+  <h3>三级 Fallback 总结</h3>
+
+  <table>
+    <tr>
+      <th>级别</th>
+      <th>条件</th>
+      <th>返回格式</th>
+      <th>output 字段内容</th>
+    </tr>
+    <tr>
+      <td style="background:var(--green-light);">正常</td>
+      <td>events 非空，最后一个 event 有 <code>node_output</code></td>
+      <td><code>{"node_output": {...}, "event_count": N, "events": [...]}</code></td>
+      <td>提取的 <code>node_output</code> 业务数据</td>
+    </tr>
+    <tr>
+      <td style="background:var(--orange-light);">Fallback B</td>
+      <td>events 非空，但没有 <code>node_output</code></td>
+      <td><code>{"output": events, "event_count": N, "events": [...]}</code></td>
+      <td>原始 SSE event 对象</td>
+    </tr>
+    <tr>
+      <td style="background:var(--red-light);">Fallback A</td>
+      <td>events 为空（无有效 SSE 帧）</td>
+      <td><code>{"output": raw_text_or_json}</code></td>
+      <td>原始 HTTP 响应文本（如能 JSON 解析则为对象）</td>
+    </tr>
+  </table>
+
+  <div class="decision-box">
+    <strong>设计原则：</strong>无论 workflow 服务端返回什么格式，<code>workflow_api_call</code> 工具<strong>永远返回有用数据</strong>：<br>
+    能解析 <code>node_output</code> 就用结构化数据，不能就把原始响应放进 <code>output</code> 字段。<br>
+    LLM 和前端总能拿到 workflow 的返回内容。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>7. 异常处理</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>workflow_api_call 的异常链</h3>
+
+  <table>
+    <tr>
+      <th>异常类型</th>
+      <th>触发条件</th>
+      <th>抛出的错误</th>
+      <th>LLM 看到什么</th>
+    </tr>
+    <tr>
+      <td><code>httpx.TimeoutException</code></td>
+      <td>请求超时（默认 60s）</td>
+      <td><code>WorkflowExecutionError("workflow request timed out after 60.0s")</code></td>
+      <td>ToolMessage with error content</td>
+    </tr>
+    <tr>
+      <td><code>httpx.HTTPStatusError</code></td>
+      <td>HTTP 4xx/5xx 响应</td>
+      <td><code>WorkflowExecutionError("workflow HTTP 500: {body[:200]}")</code></td>
+      <td>ToolMessage with error content</td>
+    </tr>
+    <tr>
+      <td><code>httpx.HTTPError</code></td>
+      <td>连接失败、DNS 解析失败等</td>
+      <td><code>WorkflowExecutionError("workflow HTTP error: {exc}")</code></td>
+      <td>ToolMessage with error content</td>
+    </tr>
+    <tr>
+      <td>其他 <code>Exception</code></td>
+      <td>JSON 序列化失败等</td>
+      <td><code>WorkflowExecutionError("workflow call failed: {exc}")</code></td>
+      <td>ToolMessage with error content</td>
+    </tr>
+  </table>
+
+  <div class="decision-box">
+    <strong>所有异常都转换为 <code>WorkflowExecutionError</code>（code="workflow_execution_error"）。</strong><br>
+    deepagent runtime 捕获异常并将错误消息包装为 <code>ToolMessage</code> 返回给 LLM。<br>
+    LLM 看到错误后可能重试或告知用户失败。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>8. CompletionGateMiddleware — 任务完成门控</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>8.1 触发时机</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
+    CompletionGateMiddleware 实现了 <code>before_model</code> hook — 在<strong>下一次 model call 之前</strong>检查。<br>
+    不是在 tool call 返回时检查，而是在 deepagent 准备发起下一轮 LLM 调用时检查。
+  </p>
+
+  <div class="flow">
+    <div class="flow-step phase-gate" data-step="1">
+      <div class="step-title">扫描所有消息，查找 workflow_api_call 的 ToolMessage</div>
+      <div class="step-detail">
+        <code>any(self._is_workflow_result(msg, ToolMessage) for msg in messages)</code><br>
+        判断条件很简单：<strong>只要消息中存在 name="workflow_api_call" 的 ToolMessage</strong>，就触发。<br>
+        不区分成功返回还是白名单拒绝 — 都算 workflow 结果。
+      </div>
+      <div class="step-code">@staticmethod
+def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:
+    if not isinstance(msg, tool_message_cls):
+        return False
+    return getattr(msg, "name", "") == "workflow_api_call"</div>
+    </div>
+    <div class="flow-step phase-gate" data-step="2">
+      <div class="step-title">触发 → 终止 deepagent 循环</div>
+      <div class="step-detail">
+        返回 <code>{"jump_to": "end", "messages": [AIMessage(...)]}</code><br>
+        deepagent runtime 收到 <code>jump_to: "end"</code> 后不再调用 LLM，直接结束循环。<br>
+        附带的 AIMessage 包含一个 protocol frame。
+      </div>
+      <div class="step-trace trace-orange">completion_gate_triggered: 检测到workflow返回结果，终止agent循环，等待前端确认</div>
+    </div>
+    <div class="flow-step phase-gate" data-step="3">
+      <div class="step-title">输出 protocol frame</div>
+      <div class="step-detail">
+        CompletionGate 构造的 AIMessage 内容：
+      </div>
+      <div class="step-code">{"frames": [{
+    "ok": true,
+    "status": "waiting_assistant_completion",
+    "completion_state": 1,
+    "completion_reason": "workflow_result_available",
+    "output": {}
+}]}</div>
+    </div>
+  </div>
+
+  <div class="decision-box">
+    <strong>为什么 output 是空的？</strong><br>
+    CompletionGate 只负责终止循环，不负责提取 workflow 结果。workflow 的返回数据仍然在消息历史中的 ToolMessage 里。<br>
+    前端通过 SSE stream 收到 trace events（包含 <code>workflow_call_completed</code> 的 result_preview）来获取详细结果。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>9. API 层 — 结果封装与 SSE 输出</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>9.1 agent.invoke() 返回后</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-output" data-step="1">
+      <div class="step-title">_extract_frames(result) — 解析 agent 最终输出</div>
+      <div class="step-detail">
+        从 agent 返回的最后一条 AIMessage 中提取 JSON → 解析为 <code>AssistantProtocolFrame</code> 列表。<br>
+        CompletionGate 注入的 frame 在这里被提取出来。
+      </div>
+    </div>
+    <div class="flow-step phase-output" data-step="2">
+      <div class="step-title">emit trace: assistant_protocol_frames</div>
+      <div class="step-detail">
+        记录生成了多少个 frame 及其内容。
+      </div>
+      <div class="step-trace trace-blue">assistant_protocol_frames: 生成 1 个 message frame</div>
+    </div>
+    <div class="flow-step phase-output" data-step="3">
+      <div class="step-title">SSE 响应发送给前端</div>
+      <div class="step-detail">
+        按顺序发送：trace events → message frames → done 事件
+      </div>
+    </div>
+  </div>
+
+  <h3>9.2 前端收到的 SSE 流</h3>
+
+  <div class="prompt-preview">
+    <div class="pp-header">SSE Stream（前端收到的完整响应）</div>
+    <div class="pp-body">event: trace
+data: {"stage":"request_received","title":"请求进入Router","summary":"session=test_002..."}
+
+event: trace
+data: {"stage":"deepagent_runtime_start","title":"DeepAgent运行开始",...}
+
+event: trace
+data: {"stage":"skill_metadata_injected","title":"技能元数据注入",...}
+
+event: trace
+data: {"stage":"skill_loaded","title":"技能加载",...}
+
+event: trace
+data: {"stage":"skill_reference_loaded","title":"技能参考文件加载",...}
+
+event: trace
+data: {"stage":"<span class="highlight">workflow_call_started</span>","title":"Workflow API调用开始","summary":"method=POST url=http://127.0.0.1:9877/...","data":{"method":"POST","url":"...","body":{...}}}
+
+event: trace
+data: {"stage":"<span class="highlight">workflow_call_completed</span>","title":"Workflow API调用完成","summary":"返回结果长度: 342 字符","data":{"result_preview":"{\"node_output\":{...}}"}}
+
+event: trace
+data: {"stage":"<span class="highlight">completion_gate_triggered</span>","title":"任务完成门控触发","summary":"检测到workflow返回结果，终止agent循环，等待前端确认"}
+
+event: trace
+data: {"stage":"assistant_protocol_frames","title":"SSE业务帧生成","summary":"生成 1 个 message frame",...}
+
+event: message
+data: {"ok":true,"status":"waiting_assistant_completion","completion_state":1,"completion_reason":"workflow_result_available","output":{},"slot_memory":{},"task_list":[],"actions":[]}
+
+event: done
+data: [DONE]</div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>10. 前端确认 — /api/v1/task/completion</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>前端收到 completion_state=1 后的流程</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-output" data-step="1">
+      <div class="step-title">前端展示"完成"按钮</div>
+      <div class="step-detail">
+        前端检测到 <code>status=waiting_assistant_completion</code>, <code>completion_state=1</code><br>
+        → 展示"模拟完成当前任务"按钮给用户
+      </div>
+    </div>
+    <div class="flow-step phase-output" data-step="2">
+      <div class="step-title">用户点击 → POST /api/v1/task/completion</div>
+      <div class="step-detail">
+        发送：<code>{"completionSignal": 1, "taskId": "task_001", ...}</code>
+      </div>
+    </div>
+    <div class="flow-step phase-output" data-step="3">
+      <div class="step-title">API 直接返回完成帧</div>
+      <div class="step-detail">
+        <strong>不经过 agent 或 middleware</strong> — API 层直接构造 protocol frame 返回。
+      </div>
+      <div class="step-code">// completionSignal=1 (成功):
+{"ok": true, "status": "completed", "completion_state": 2, "completion_reason": "task_completion_received", ...}
+
+// completionSignal=2 (失败):
+{"ok": false, "status": "failed", "completion_state": 2, "completion_reason": "task_completion_received", ...}</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>11. 完整时序图 — 转账场景</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>"给张三转账500元" 的完整 workflow 调用链</h3>
+
+  <table>
+    <tr>
+      <th>步骤</th>
+      <th>执行者</th>
+      <th>动作</th>
+      <th>输入</th>
+      <th>输出</th>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>前端</td>
+      <td>POST /api/v1/message</td>
+      <td><code>{"txt":"给张三转账500元", "executionMode":"execute", ...}</code></td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>API</td>
+      <td>_invoke_agent()</td>
+      <td>HumanMessage(content=json_string)</td>
+      <td>deepagent 开始循环</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>SkillLifecycleMiddleware</td>
+      <td>Phase 1: 注入 metadata</td>
+      <td>—</td>
+      <td>system prompt 中出现 skill 列表</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>LLM (model call #1)</td>
+      <td>意图识别</td>
+      <td>metadata + 用户输入</td>
+      <td>输出 AG_TRANS + tool_call: read_file("/skills/transfer-routing/...")</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>SkillLifecycleMiddleware</td>
+      <td>Phase 2: 检测到 AG_TRANS，加载 skill</td>
+      <td>—</td>
+      <td>system prompt 注入 skill body + references</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>LLM (model call #2)</td>
+      <td>读取 reference → 发出 workflow_api_call</td>
+      <td>skill body + references（含完整 URL）</td>
+      <td>tool_call: workflow_api_call(method, url, body)</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td>WorkflowGatewayMiddleware</td>
+      <td>URL 白名单校验 → 通过</td>
+      <td>url=http://127.0.0.1:9877/...</td>
+      <td>emit trace: workflow_call_started</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>workflow.py</td>
+      <td>HTTP POST（流式）</td>
+      <td>JSON body → mock_workflow_server</td>
+      <td>SSE stream（3 个 event）</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td>workflow.py</td>
+      <td>SSE 解析 → _extract_node_output()</td>
+      <td>events[-1]["additional_kwargs"]["node_output"]</td>
+      <td><code>{"output":"mock-transfer-done","exception":null}</code></td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td>WorkflowGatewayMiddleware</td>
+      <td>emit trace: workflow_call_completed</td>
+      <td>result json string</td>
+      <td>ToolMessage 返回给 deepagent</td>
+    </tr>
+    <tr>
+      <td>11</td>
+      <td>CompletionGateMiddleware</td>
+      <td>before_model: 检测到 workflow ToolMessage</td>
+      <td>—</td>
+      <td>jump_to: "end" → 终止循环</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td>API</td>
+      <td>_extract_frames() → SSE 输出</td>
+      <td>CompletionGate 的 AIMessage</td>
+      <td>前端收到 completion_state=1</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td>前端</td>
+      <td>POST /api/v1/task/completion</td>
+      <td><code>{"completionSignal":1}</code></td>
+      <td>completion_state=2, status=completed</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>12. 代码映射 — 方法 → 文件 → 行为</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <table>
+    <tr><th>方法/函数</th><th>文件</th><th>行为</th></tr>
+    <tr>
+      <td><code>create_workflow_tool()</code></td>
+      <td>workflow.py</td>
+      <td>创建 <code>workflow_api_call</code> StructuredTool，定义 input schema</td>
+    </tr>
+    <tr>
+      <td><code>workflow_api_call()</code></td>
+      <td>workflow.py（闭包）</td>
+      <td>工具执行函数：日志 → _execute_workflow_sse() → 日志 → 返回 JSON string</td>
+    </tr>
+    <tr>
+      <td><code>_execute_workflow_sse()</code></td>
+      <td>workflow.py</td>
+      <td>HTTP 流式请求 + SSE 分帧 + 三级 fallback 解析</td>
+    </tr>
+    <tr>
+      <td><code>_extract_node_output()</code></td>
+      <td>workflow.py</td>
+      <td>双位置查找 node_output（顶层 / additional_kwargs）</td>
+    </tr>
+    <tr>
+      <td><code>_parse_sse_event()</code></td>
+      <td>workflow.py</td>
+      <td>解析单个 SSE 帧：提取 data: 行 → JSON 解析</td>
+    </tr>
+    <tr>
+      <td><code>_raw_output()</code></td>
+      <td>workflow.py</td>
+      <td>Fallback A：将原始文本包装为 <code>{"output": ...}</code></td>
+    </tr>
+    <tr>
+      <td><code>WorkflowGatewayMiddleware.wrap_tool_call()</code></td>
+      <td>middleware.py</td>
+      <td>拦截 workflow_api_call：URL 校验 → hooks → 执行 → trace</td>
+    </tr>
+    <tr>
+      <td><code>WorkflowGatewayMiddleware._check_url()</code></td>
+      <td>middleware.py</td>
+      <td>URL 白名单前缀匹配，拒绝时构造错误 ToolMessage</td>
+    </tr>
+    <tr>
+      <td><code>CompletionGateMiddleware._gate()</code></td>
+      <td>middleware.py</td>
+      <td>扫描消息中是否有 workflow ToolMessage → jump_to: end</td>
+    </tr>
+    <tr>
+      <td><code>CompletionGateMiddleware._is_workflow_result()</code></td>
+      <td>middleware.py</td>
+      <td>判断 ToolMessage.name == "workflow_api_call"</td>
+    </tr>
+    <tr>
+      <td><code>_invoke_agent()</code></td>
+      <td>api.py</td>
+      <td>调用 agent.invoke()，传入 HumanMessage + thread_id</td>
+    </tr>
+    <tr>
+      <td><code>_extract_frames()</code></td>
+      <td>api.py</td>
+      <td>从 agent 输出解析 AssistantProtocolFrame 列表</td>
+    </tr>
+    <tr>
+      <td><code>_sse_response() / _sse_events()</code></td>
+      <td>api.py</td>
+      <td>将 trace + frames 封装为 SSE stream 响应</td>
+    </tr>
+    <tr>
+      <td><code>MockWorkflowHandler.do_POST()</code></td>
+      <td>mock_workflow_server.py</td>
+      <td>接收请求 → 打印 REQUEST/RESPONSE 日志 → 返回 SSE</td>
+    </tr>
+    <tr>
+      <td><code>_outputs_for_path()</code></td>
+      <td>mock_workflow_server.py</td>
+      <td>根据路径中的 agent ID 返回对应的模拟数据</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>13. 设计约束与边界</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <table>
+    <tr><th>约束</th><th>说明</th></tr>
+    <tr>
+      <td>URL 必须来自 skill reference</td>
+      <td>Skill Loading Protocol 指令要求 LLM 从 reference 读取 URL，不能自己编造</td>
+    </tr>
+    <tr>
+      <td>URL 白名单由 TOML 配置</td>
+      <td><code>[deepagent].workflow_allowed_urls</code> 中配置，不在框架代码中硬编码</td>
+    </tr>
+    <tr>
+      <td>白名单拒绝 = 任务完成</td>
+      <td>CompletionGate 不区分成功/拒绝，只要有 workflow_api_call 的 ToolMessage 就终止</td>
+    </tr>
+    <tr>
+      <td>任务完成必须前端确认</td>
+      <td>CompletionGate 设置 <code>completion_state=1</code>（等待），只有 /completion 接口才设 <code>completion_state=2</code></td>
+    </tr>
+    <tr>
+      <td>解析失败不丢数据</td>
+      <td>三级 fallback 确保任何格式的 workflow 响应都能作为 output 返回</td>
+    </tr>
+    <tr>
+      <td>工具函数业务无关</td>
+      <td><code>workflow_api_call</code> 只做 HTTP+SSE，不理解转账/缴费业务语义</td>
+    </tr>
+    <tr>
+      <td><code>node_output</code> 双位置查找</td>
+      <td>兼容 deepagent runtime 格式（顶层或 additional_kwargs 内）</td>
+    </tr>
+    <tr>
+      <td>before/after hooks 扩展点</td>
+      <td>WorkflowGatewayMiddleware 支持注入自定义 hooks，after hook 异常不影响主流程</td>
+    </tr>
+    <tr>
+      <td>CompletionGate 在 before_model 触发</td>
+      <td>不是 tool call 返回时触发，而是下一次 model call 之前。这意味着 workflow ToolMessage 已经在消息历史中</td>
+    </tr>
+  </table>
+</div>
+
+</body>
+</html>
