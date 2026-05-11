@@ -20,7 +20,13 @@ class MockWorkflowHandler(BaseHTTPRequestHandler):
         body = self._read_json_body()
         record = {"path": self.path, "body": body}
         print("MOCK_WORKFLOW_REQUEST", json.dumps(record, ensure_ascii=False), flush=True)
-        self._write_sse(_outputs_for_path(self.path, body))
+        outputs = _outputs_for_path(self.path, body)
+        print(
+            "MOCK_WORKFLOW_RESPONSE",
+            json.dumps({"path": self.path, "event_count": len(outputs), "outputs": outputs}, ensure_ascii=False),
+            flush=True,
+        )
+        self._write_sse(outputs)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
