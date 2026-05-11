@@ -40,9 +40,10 @@ def create_workflow_tool(
     def workflow_api_call(method: str = "POST", url: str = "", body: dict[str, Any] | None = None) -> str:
         """Call a workflow API endpoint and parse SSE node_output events."""
         body = body or {}
-        logger.info("workflow_api_call method=%s url=%s", method, url)
+        logger.info("workflow_api_call method=%s url=%s body=%s", method, url, json.dumps(body, ensure_ascii=False))
         try:
             result = _execute_workflow_sse(method, url, body, timeout=timeout_seconds)
+            logger.info("workflow_api_call response=%s", json.dumps(result, ensure_ascii=False))
             return json.dumps(result, ensure_ascii=False)
         except WorkflowExecutionError:
             raise
@@ -104,7 +105,7 @@ def _execute_workflow_sse(
         return _raw_output(raw_text)
 
     last = events[-1]
-    node_output = last.get("node_output")
+    node_output = _extract_node_output(last)
     if node_output is not None:
         return {
             "node_output": node_output,
@@ -119,6 +120,20 @@ def _execute_workflow_sse(
         "event_count": len(events),
         "events": events,
     }
+
+
+def _extract_node_output(event: dict[str, Any]) -> Any | None:
+    """Extract ``node_output`` from an SSE event.
+
+    The deepagent workflow runtime may place ``node_output`` either at
+    the top level of the event or nested under ``additional_kwargs``.
+    """
+    if "node_output" in event:
+        return event["node_output"]
+    additional = event.get("additional_kwargs")
+    if isinstance(additional, dict) and "node_output" in additional:
+        return additional["node_output"]
+    return None
 
 
 def _raw_output(text: str) -> dict[str, Any]:
