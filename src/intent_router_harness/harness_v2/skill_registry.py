@@ -120,6 +120,10 @@ class SkillRegistry:
         """Return registered skill names in sorted order."""
         return sorted(self._skills)
 
+    def intent_codes(self) -> list[str]:
+        """Return all registered intent codes."""
+        return list(self._intent_index.keys())
+
     def get_meta(self, name: str) -> SkillMeta | None:
         """Return metadata for a skill by name."""
         return self._skills.get(name)

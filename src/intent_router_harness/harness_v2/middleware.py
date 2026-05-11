@@ -417,19 +417,43 @@ def build_harness_middleware(
             """Scan recent messages for intent_code or skill name signals.
 
             Business-agnostic: reads structured JSON from agent output,
-            does not hard-code any intent codes.
+            checks tool calls, and scans plain-text mentions of known
+            intent codes registered in the skill registry.
             """
             for msg in reversed(messages):
                 content = getattr(msg, "content", "")
-                if not isinstance(content, str) or not content.strip().startswith("{"):
+                if not isinstance(content, str):
                     continue
-                try:
-                    payload = json.loads(content)
-                except json.JSONDecodeError:
-                    continue
-                skill_name = self._extract_skill_from_payload(payload)
-                if skill_name:
-                    return skill_name
+
+                # Try structured JSON first
+                stripped = content.strip()
+                if stripped.startswith("{"):
+                    try:
+                        payload = json.loads(stripped)
+                        skill_name = self._extract_skill_from_payload(payload)
+                        if skill_name:
+                            return skill_name
+                    except json.JSONDecodeError:
+                        pass
+
+                # Scan plain-text for known intent codes (e.g., "AG_TRANS")
+                if self._registry is not None:
+                    for intent_code in self._registry.intent_codes():
+                        if intent_code in content:
+                            meta = self._registry.find_by_intent(intent_code)
+                            if meta:
+                                return meta.name
+
+                # Check tool calls for skill-related read_file paths
+                tool_calls = getattr(msg, "tool_calls", None)
+                if tool_calls:
+                    for tc in tool_calls:
+                        args = tc.get("args", {}) if isinstance(tc, dict) else {}
+                        file_path = args.get("file_name") or args.get("path") or args.get("file_path") or ""
+                        if "/skills/" in file_path and self._registry is not None:
+                            for name in self._registry.names():
+                                if name in file_path:
+                                    return name
             return None
 
         def _extract_skill_from_payload(self, payload: dict[str, Any]) -> str | None:
