@@ -207,6 +207,8 @@ Phase 3: 卸载（任务切换或完成）
 
 确保 `.env` 已配置好 LLM 凭据（参见 2.2）。
 
+> **`.env` 自动加载：** 启动时会自动加载当前目录下的 `.env` 文件，无需手动 `source .env`。也可通过 `--env-file` 指定其他路径。
+
 ### 3.2 启动 Harness 服务
 
 ```bash
@@ -218,6 +220,9 @@ make serve
 
 # 方式三：带热重载（开发模式）
 .venv/bin/python -m intent_router_harness serve examples/deepagent-finance-router-harness-local.toml --port 8765 --reload
+
+# 方式四：指定其他 .env 文件
+.venv/bin/python -m intent_router_harness serve examples/deepagent-finance-router-harness-local.toml --env-file /path/to/.env.production
 ```
 
 启动后终端输出：

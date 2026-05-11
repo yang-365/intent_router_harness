@@ -26,6 +26,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "uvicorn[standard]>=0.30",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]

@@ -22,12 +22,18 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--host", default="0.0.0.0")
     serve_parser.add_argument("--port", type=int, default=8765)
     serve_parser.add_argument("--reload", action="store_true")
+    serve_parser.add_argument("--env-file", type=Path, default=None, help="Path to .env file (default: auto-detect .env in cwd)")
 
     args = parser.parse_args(argv)
     if args.command == "serve":
         import os
 
         import uvicorn
+        from dotenv import load_dotenv
+
+        env_file = args.env_file or Path.cwd() / ".env"
+        if env_file.exists():
+            load_dotenv(env_file, override=True)
 
         if args.spec:
             os.environ["HARNESS_SPEC_PATH"] = str(args.spec)
