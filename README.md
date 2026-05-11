@@ -6,7 +6,7 @@ progressive skill lifecycle, and protocol-compatible assistant API.
 ## Key Features
 
 - **Zero-invasion deepagent wrapper**: `create_deep_agent()` used as-is; all
-  enterprise logic lives in 6 middleware classes.
+  enterprise logic lives in 7 middleware classes.
 - **Progressive skill lifecycle**: Metadata-only scan at startup, body loaded
   on-demand per intent, unloaded after task completion.
 - **Multi-user session isolation**: Concurrency locks per session, idle timeout,
@@ -26,7 +26,7 @@ intent_router_harness/
 │   │   ├── api.py                #   FastAPI app factory
 │   │   ├── config.py             #   TOML spec loading
 │   │   ├── errors.py             #   Error hierarchy
-│   │   ├── middleware.py          #   6 enterprise middleware classes
+│   │   ├── middleware.py          #   7 enterprise middleware classes
 │   │   ├── protocol.py           #   AssistantProtocolFrame, requests
 │   │   ├── session.py            #   SessionManager (isolation + locks)
 │   │   ├── skill_registry.py     #   Filesystem-based skill index

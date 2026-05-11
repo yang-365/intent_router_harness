@@ -5,7 +5,7 @@ Modules:
     session   — Multi-user session isolation + concurrency locks
     protocol  — AssistantProtocolFrame (same wire format as v1)
     errors    — Error hierarchy
-    middleware — 6 enterprise middleware classes
+    middleware — 7 enterprise middleware classes
     skill_registry — Filesystem-based skill index with progressive loading
     workflow  — Workflow tool factory + SSE parsing
     agent     — build_agent() via create_deep_agent

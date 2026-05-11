@@ -9,7 +9,7 @@ from urllib import request
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check DeepAgent harness transfer E2E over /api/v1/message.")
-    parser.add_argument("--url", default="http://127.0.0.1:8766/api/v1/message")
+    parser.add_argument("--url", default="http://127.0.0.1:8765/api/v1/message")
     parser.add_argument("--session-id", default="e2e_deepagent_transfer_001")
     parser.add_argument("--cust-id", default="C_E2E_001")
     parser.add_argument("--text", default="给陈广荣转500元")
