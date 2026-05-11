@@ -32,7 +32,7 @@ mock-workflow: ## Start the mock workflow server (PORT=9876)
 	python examples/mock_workflow_server.py --host 127.0.0.1 --port $${PORT:-9876}
 
 e2e: ## Run end-to-end validation (requires running server + mock-workflow)
-	python examples/deepagent_e2e_check.py --url http://127.0.0.1:$${PORT:-8766}/api/v1/message
+	python examples/deepagent_e2e_check.py --url http://127.0.0.1:$${PORT:-8765}/api/v1/message
 
 clean: ## Remove build artifacts and caches
 	rm -rf build/ dist/ *.egg-info src/*.egg-info .pytest_cache __pycache__

@@ -3,7 +3,7 @@
 ## Local
 
 ```bash
-python -m intent_router_harness serve examples/deepagent-finance-router-harness.toml --port 8765
+.venv/bin/python -m intent_router_harness serve examples/deepagent-finance-router-harness.toml --port 8765
 ```
 
 Health check:
@@ -17,10 +17,11 @@ curl -s http://127.0.0.1:8765/healthz
 Environment variables (see `.env.example`):
 
 ```bash
-ROUTER_LLM_API_BASE_URL=...
-ROUTER_LLM_API_KEY=...
-ROUTER_LLM_MODEL=...
+OPENAI_API_BASE=https://api.siliconflow.cn/v1
+OPENAI_API_KEY=sk-your-real-key
 ```
+
+> Model is configured in the TOML spec file (`[deepagent].model`), not via environment variable.
 
 ## Kubernetes
 

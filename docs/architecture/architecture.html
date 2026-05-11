@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intent Router Harness — 项目架构图</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --border: #475569;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #818cf8;
+    --green: #34d399;
+    --orange: #fb923c;
+    --pink: #f472b6;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --cyan: #22d3ee;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px;
+    line-height: 1.6;
+  }
+  h1 { text-align: center; font-size: 28px; margin-bottom: 8px; color: var(--accent); }
+  .subtitle { text-align: center; color: var(--text-dim); margin-bottom: 40px; font-size: 14px; }
+
+  /* ---- Layout ---- */
+  .section { margin-bottom: 48px; }
+  .section-title {
+    font-size: 20px; font-weight: 700; margin-bottom: 20px;
+    padding-left: 12px; border-left: 4px solid var(--accent);
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  /* ---- Cards ---- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; position: relative;
+  }
+  .card-title {
+    font-size: 15px; font-weight: 700; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  }
+  .badge-blue   { background: rgba(56,189,248,.15); color: var(--accent); }
+  .badge-green  { background: rgba(52,211,153,.15); color: var(--green); }
+  .badge-orange { background: rgba(251,146,60,.15); color: var(--orange); }
+  .badge-pink   { background: rgba(244,114,182,.15); color: var(--pink); }
+  .badge-purple { background: rgba(129,140,248,.15); color: var(--accent2); }
+  .badge-yellow { background: rgba(251,191,36,.15); color: var(--yellow); }
+  .badge-red    { background: rgba(248,113,113,.15); color: var(--red); }
+  .card ul { list-style: none; padding: 0; }
+  .card li { padding: 3px 0; font-size: 13px; color: var(--text-dim); }
+  .card li code { color: var(--accent); font-size: 12px; }
+  .card p { font-size: 13px; color: var(--text-dim); }
+
+  /* ---- Big Architecture Diagram ---- */
+  .arch-diagram {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 32px; margin-bottom: 48px;
+    overflow-x: auto;
+  }
+  .arch-row {
+    display: flex; align-items: stretch; gap: 16px;
+    margin-bottom: 16px; justify-content: center; flex-wrap: wrap;
+  }
+  .arch-box {
+    border-radius: 10px; padding: 14px 20px; text-align: center;
+    font-size: 13px; font-weight: 600; min-width: 150px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .arch-box small { font-weight: 400; font-size: 11px; opacity: .7; margin-top: 2px; }
+  .arch-arrow {
+    text-align: center; color: var(--text-dim); font-size: 22px;
+    margin: 4px 0; user-select: none;
+  }
+  .arch-arrow-label {
+    font-size: 11px; color: var(--text-dim); text-align: center;
+    margin: -2px 0 4px;
+  }
+
+  .layer-external  { background: rgba(251,146,60,.12); border: 1.5px solid var(--orange); color: var(--orange); }
+  .layer-api       { background: rgba(56,189,248,.12); border: 1.5px solid var(--accent); color: var(--accent); }
+  .layer-session   { background: rgba(52,211,153,.12); border: 1.5px solid var(--green); color: var(--green); }
+  .layer-mw        { background: rgba(129,140,248,.12); border: 1.5px solid var(--accent2); color: var(--accent2); }
+  .layer-sdk       { background: rgba(244,114,182,.12); border: 1.5px solid var(--pink); color: var(--pink); }
+  .layer-llm       { background: rgba(251,191,36,.12); border: 1.5px solid var(--yellow); color: var(--yellow); }
+  .layer-workflow   { background: rgba(248,113,113,.12); border: 1.5px solid var(--red); color: var(--red); }
+  .layer-skill     { background: rgba(34,211,238,.12); border: 1.5px solid var(--cyan); color: var(--cyan); }
+
+  /* ---- Flow Diagram ---- */
+  .flow {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    justify-content: center; margin: 16px 0;
+  }
+  .flow-step {
+    padding: 8px 14px; border-radius: 8px; font-size: 12px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .flow-arrow { color: var(--text-dim); font-size: 18px; padding: 0 4px; }
+  .flow-label { font-size: 11px; color: var(--text-dim); text-align: center; width: 100%; margin-top: 4px; }
+
+  /* ---- Middleware Chain ---- */
+  .mw-chain {
+    display: flex; flex-direction: column; gap: 2px;
+    counter-reset: mw-counter;
+  }
+  .mw-item {
+    display: grid; grid-template-columns: 36px 200px 1fr 120px; gap: 12px;
+    align-items: center; padding: 10px 16px; border-radius: 8px;
+    font-size: 13px; counter-increment: mw-counter;
+  }
+  .mw-item:nth-child(odd) { background: rgba(255,255,255,.02); }
+  .mw-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .mw-name { font-weight: 700; }
+  .mw-desc { color: var(--text-dim); font-size: 12px; }
+  .mw-hook { font-size: 11px; font-family: monospace; }
+
+  /* ---- Module Map ---- */
+  .mod-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .mod-item {
+    background: var(--surface2); border-radius: 8px; padding: 12px 16px;
+  }
+  .mod-item code { color: var(--accent); font-size: 13px; font-weight: 600; }
+  .mod-item p { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+  /* ---- Skill Structure ---- */
+  .skill-tree {
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 13px; line-height: 2; color: var(--text-dim);
+    background: var(--surface2); border-radius: 10px; padding: 20px;
+  }
+  .skill-tree .dir  { color: var(--cyan); font-weight: 700; }
+  .skill-tree .file { color: var(--text); }
+  .skill-tree .desc { color: var(--text-dim); font-style: italic; }
+
+  /* ---- Trace Timeline ---- */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: ''; position: absolute; left: 11px; top: 8px; bottom: 8px;
+    width: 2px; background: var(--border);
+  }
+  .tl-item {
+    position: relative; padding: 6px 0 6px 20px; font-size: 13px;
+  }
+  .tl-item::before {
+    content: ''; position: absolute; left: -20px; top: 12px;
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid; background: var(--bg);
+  }
+  .tl-phase1::before { border-color: var(--accent); }
+  .tl-phase2::before { border-color: var(--green); }
+  .tl-phase3::before { border-color: var(--orange); }
+  .tl-phase4::before { border-color: var(--pink); }
+  .tl-phase5::before { border-color: var(--red); }
+  .tl-stage { font-family: monospace; font-size: 12px; }
+
+  /* ---- Helpers ---- */
+  .sep { border: 0; border-top: 1px dashed var(--border); margin: 16px 0; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .note {
+    background: rgba(56,189,248,.08); border: 1px solid rgba(56,189,248,.2);
+    border-radius: 8px; padding: 12px 16px; font-size: 13px;
+    color: var(--text-dim); margin-top: 16px;
+  }
+  .note strong { color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--border); color: var(--accent); font-weight: 600; }
+  td { padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.05); color: var(--text-dim); }
+  td code { color: var(--accent); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Intent Router Harness — 项目架构</h1>
+<p class="subtitle">Enterprise Shell over DeepAgent SDK · v2 Runtime · 不修改 SDK，只做包装</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 1. OVERALL LAYERED ARCHITECTURE                        -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">一、整体分层架构</div>
+  <div class="arch-diagram">
+
+    <!-- External -->
+    <div class="arch-row">
+      <div class="arch-box layer-external" style="min-width:300px">
+        📱 前端（掌银 App / Debug UI）
+        <small>POST /api/v1/message · /api/v1/task/completion</small>
+      </div>
+      <div class="arch-box layer-external" style="min-width:200px">
+        ⚙️ TOML Spec 配置
+        <small>skill_roots · workflow_urls · model</small>
+      </div>
+    </div>
+    <div class="arch-arrow">▼</div>
+    <div class="arch-arrow-label">HTTP JSON / SSE</div>
+
+    <!-- API Layer -->
+    <div class="arch-row">
+      <div class="arch-box layer-api" style="flex:1; max-width:600px">
+        <b>FastAPI 路由层</b> <code style="font-size:11px">api.py</code>
+        <small>/api/v1/message · /api/v1/task/completion · /healthz · /readyz · Debug UI</small>
+      </div>
+    </div>
+    <div class="arch-arrow">▼</div>
+    <div class="arch-arrow-label">acquire(custID, sessionId)</div>
+
+    <!-- Session Manager -->
+    <div class="arch-row">
+      <div class="arch-box layer-session" style="flex:1; max-width:600px">
+        <b>SessionManager</b> <code style="font-size:11px">session.py</code>
+        <small>多用户隔离 · 并发锁（同 session 串行）· 过期回收 · custID↔thread_id 映射</small>
+      </div>
+    </div>
+    <div class="arch-arrow">▼</div>
+    <div class="arch-arrow-label">agent.astream(messages, thread_id)</div>
+
+    <!-- DeepAgent SDK -->
+    <div class="arch-row">
+      <div class="arch-box layer-sdk" style="flex:1; max-width:700px; padding: 18px 24px;">
+        <b>DeepAgent SDK</b>（不修改）
+        <small style="margin-top:6px">create_deep_agent(model, tools, skills, memory, middleware, backend, checkpointer)</small>
+        <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; justify-content:center;">
+          <span class="tag" style="background:rgba(244,114,182,.15);color:var(--pink)">LangGraph 状态图</span>
+          <span class="tag" style="background:rgba(244,114,182,.15);color:var(--pink)">SkillsMiddleware</span>
+          <span class="tag" style="background:rgba(244,114,182,.15);color:var(--pink)">MemorySaver</span>
+          <span class="tag" style="background:rgba(244,114,182,.15);color:var(--pink)">FilesystemBackend</span>
+          <span class="tag" style="background:rgba(244,114,182,.15);color:var(--pink)">StructuredTool</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:center; gap: 80px; margin-top: 16px;">
+      <div style="text-align:center">
+        <div class="arch-arrow">▼</div>
+        <div class="arch-arrow-label">wrap_model_call / before_model / after_model</div>
+        <div class="arch-box layer-mw" style="min-width:220px">
+          <b>7 Harness Middleware</b>
+          <small>企业强约束层 · 见第三节</small>
+        </div>
+      </div>
+      <div style="text-align:center">
+        <div class="arch-arrow">▼</div>
+        <div class="arch-arrow-label">wrap_tool_call</div>
+        <div style="display:flex; gap:12px;">
+          <div class="arch-box layer-workflow" style="min-width:160px">
+            <b>workflow_api_call</b>
+            <small>SSE → node_output</small>
+          </div>
+          <div class="arch-box layer-skill" style="min-width:160px">
+            <b>SkillFileMiddleware</b>
+            <small>虚拟 read_file 拦截</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:center; gap: 80px; margin-top: 16px;">
+      <div style="text-align:center">
+        <div class="arch-arrow">▼</div>
+        <div class="arch-box layer-llm" style="min-width:250px">
+          🧠 LLM (SiliconFlow / OpenAI 兼容)
+          <small>Qwen3-Coder-30B-A3B-Instruct</small>
+        </div>
+      </div>
+      <div style="text-align:center">
+        <div class="arch-arrow">▼</div>
+        <div class="arch-box layer-workflow" style="min-width:250px">
+          🔗 Workflow 子工作流服务
+          <small>SSE Endpoint · URL 白名单控制</small>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 2. MODULE MAP                                          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">二、模块结构</div>
+
+  <div style="margin-bottom: 24px;">
+    <div class="card-title"><span class="badge badge-blue">CORE</span> harness_v2/ — 核心运行时（~1400 行）</div>
+    <div class="mod-grid">
+      <div class="mod-item"><code>agent.py</code><p>build_agent() 零侵入构建 deepagent 图</p></div>
+      <div class="mod-item"><code>api.py</code><p>FastAPI 路由工厂 + SSE 流式输出</p></div>
+      <div class="mod-item"><code>config.py</code><p>HarnessConfig — TOML spec 解析</p></div>
+      <div class="mod-item"><code>errors.py</code><p>5 种错误类型：Session/Workflow/Protocol</p></div>
+      <div class="mod-item"><code>middleware.py</code><p>7 个企业中间件（见第三节）</p></div>
+      <div class="mod-item"><code>protocol.py</code><p>AssistantProtocolFrame + TraceEvent + emit_trace</p></div>
+      <div class="mod-item"><code>session.py</code><p>SessionManager 多用户隔离 + 并发锁</p></div>
+      <div class="mod-item"><code>skill_registry.py</code><p>SkillRegistry 文件扫描 + 渐进加载</p></div>
+      <div class="mod-item"><code>workflow.py</code><p>workflow_api_call StructuredTool + SSE 解析</p></div>
+      <div class="mod-item"><code>debug_ui.py</code><p>内嵌 HTML 调试前端（开发用）</p></div>
+    </div>
+  </div>
+
+  <div class="grid3" style="margin-bottom: 24px;">
+    <div class="card">
+      <div class="card-title"><span class="badge badge-green">SKILLS</span> skills/</div>
+      <ul>
+        <li>📂 <code>transfer-routing/</code> — 转账意图</li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>SKILL.md</code> — 意图边界判定</li>
+        <li>&nbsp;&nbsp;&nbsp;└ 📂 <code>references/</code></li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├ <code>slot_filling.md</code> — 提槽逻辑</li>
+        <li>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└ <code>workflow_request.md</code> — API 调用</li>
+        <li>📂 <code>bill-payment-routing/</code> — 缴费意图</li>
+        <li>&nbsp;&nbsp;&nbsp;└ <code>SKILL.md</code> — 意图边界 + 补槽</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-orange">TESTS</span> tests/</div>
+      <ul>
+        <li>📂 <code>unit/</code> — 89 个单元测试</li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_api.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_config.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_errors.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_middleware.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_protocol.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_session.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>test_harness_v2_skill_registry.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;└ <code>test_harness_v2_workflow.py</code></li>
+        <li>📂 <code>integration/</code> — ASGI 集成测试</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-purple">INFRA</span> 配置与部署</div>
+      <ul>
+        <li>📄 <code>pyproject.toml</code> — 依赖 + Ruff 规则</li>
+        <li>📄 <code>Makefile</code> — build/test/lint/serve 命令</li>
+        <li>📄 <code>.env.example</code> — 环境变量模板</li>
+        <li>📄 <code>agent.md</code> — 系统提示词</li>
+        <li>📂 <code>k8s/</code> — K8s Deployment + Service</li>
+        <li>📂 <code>examples/</code> — TOML spec 样例</li>
+        <li>&nbsp;&nbsp;&nbsp;├ <code>mock_workflow_server.py</code></li>
+        <li>&nbsp;&nbsp;&nbsp;└ <code>deepagent_e2e_check.py</code></li>
+        <li>📂 <code>docs/</code> — 架构 + 部署 + 操作手册</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 3. MIDDLEWARE CHAIN                                     -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">三、7 个中间件执行链</div>
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div class="mw-chain">
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(56,189,248,.2);color:var(--accent)">1</div>
+        <div class="mw-name" style="color:var(--accent)">TaskProgressMiddleware</div>
+        <div class="mw-desc">串行任务推进：一次一个 current_task、缺槽追问、禁止自行完成、按序执行</div>
+        <div class="mw-hook" style="color:var(--accent)">wrap_model_call</div>
+      </div>
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(52,211,153,.2);color:var(--green)">2</div>
+        <div class="mw-name" style="color:var(--green)">FrontendContextMiddleware</div>
+        <div class="mw-desc">注入 recommendTask + currentDisplay 到系统提示词，指导意图识别和任务规划</div>
+        <div class="mw-hook" style="color:var(--green)">wrap_model_call</div>
+      </div>
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(251,146,60,.2);color:var(--orange)">3</div>
+        <div class="mw-name" style="color:var(--orange)">CompletionGateMiddleware</div>
+        <div class="mw-desc">workflow 返回后自动终止 agent 循环，设置 completion_state=1，等前端 /completion 确认</div>
+        <div class="mw-hook" style="color:var(--orange)">before_model</div>
+      </div>
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(34,211,238,.2);color:var(--cyan)">4</div>
+        <div class="mw-name" style="color:var(--cyan)">SkillLifecycleMiddleware</div>
+        <div class="mw-desc">渐进式加载：Phase1 元数据摘要 → Phase2 意图命中后加载 body+reference → Phase3 任务切换时卸载/加载</div>
+        <div class="mw-hook" style="color:var(--cyan)">wrap_model_call</div>
+      </div>
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(129,140,248,.2);color:var(--accent2)">5</div>
+        <div class="mw-name" style="color:var(--accent2)">SkillFileMiddleware</div>
+        <div class="mw-desc">拦截 read_file(/skills/…) 调用 → 从 SkillRegistry 返回虚拟文件内容</div>
+        <div class="mw-hook" style="color:var(--accent2)">wrap_tool_call</div>
+      </div>
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(248,113,113,.2);color:var(--red)">6</div>
+        <div class="mw-name" style="color:var(--red)">WorkflowGatewayMiddleware</div>
+        <div class="mw-desc">URL 白名单校验 + before/after hooks + trace 记录调用和结果</div>
+        <div class="mw-hook" style="color:var(--red)">wrap_tool_call</div>
+      </div>
+      <div class="mw-item">
+        <div class="mw-num" style="background:rgba(244,114,182,.2);color:var(--pink)">7</div>
+        <div class="mw-name" style="color:var(--pink)">ProtocolOutputMiddleware</div>
+        <div class="mw-desc">校验输出符合 AssistantProtocolFrame 格式，补全缺失字段，发射 trace 事件</div>
+        <div class="mw-hook" style="color:var(--pink)">after_model</div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <strong>关键约束：</strong>中间件 4（SkillLifecycle）确保 skill reference 在提槽之前加载到上下文。
+    首次调用只注入元数据摘要用于意图识别；意图确定后才加载完整 body + reference 文件（slot_filling.md / workflow_request.md），
+    LLM 根据 reference 中的业务规则进行提槽。
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 4. TWO CRITICAL FLOWS                                  -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">四、两个核心 Harness 流程</div>
+  <div class="grid2">
+
+    <!-- Task Flow -->
+    <div class="card">
+      <div class="card-title"><span class="badge badge-blue">FLOW 1</span> 任务规划、执行与结束</div>
+      <div class="timeline" style="margin-top: 12px;">
+        <div class="tl-item tl-phase1">
+          <span class="tl-stage" style="color:var(--accent)">intent_recognized</span>
+          <br>用户输入 → LLM 根据 skill metadata 识别意图
+        </div>
+        <div class="tl-item tl-phase1">
+          <span class="tl-stage" style="color:var(--accent)">task_planned</span>
+          <br>多意图 → write_todos 规划 task_list，按表达顺序排列
+        </div>
+        <div class="tl-item tl-phase2">
+          <span class="tl-stage" style="color:var(--green)">slots_extracted</span>
+          <br>加载 skill reference → 按业务规则提槽 → 缺槽追问
+        </div>
+        <div class="tl-item tl-phase3">
+          <span class="tl-stage" style="color:var(--orange)">workflow_call_started</span>
+          <br>槽位齐全 → 调用 workflow_api_call → SSE 返回结果
+        </div>
+        <div class="tl-item tl-phase4">
+          <span class="tl-stage" style="color:var(--pink)">completion_gate_triggered</span>
+          <br>CompletionGate 终止循环 → completion_state=1
+        </div>
+        <div class="tl-item tl-phase5">
+          <span class="tl-stage" style="color:var(--red)">task_completed</span>
+          <br>前端调用 /completion → completion_state=2 → 卸载 skill → 下一个任务
+        </div>
+      </div>
+    </div>
+
+    <!-- Skill Flow -->
+    <div class="card">
+      <div class="card-title"><span class="badge badge-green">FLOW 2</span> Skill 加载、执行与卸载</div>
+      <div class="timeline" style="margin-top: 12px;">
+        <div class="tl-item tl-phase1">
+          <span class="tl-stage" style="color:var(--accent)">skill_metadata_injected</span>
+          <br>首次调用：注入所有 skill 的 name/description/intent_codes 摘要
+        </div>
+        <div class="tl-item tl-phase1">
+          <span class="tl-stage" style="color:var(--accent)">intent_recognized</span>
+          <br>LLM 基于元数据识别意图 → 输出 intent_code
+        </div>
+        <div class="tl-item tl-phase2">
+          <span class="tl-stage" style="color:var(--green)">skill_loaded</span>
+          <br>检测到 intent_code → 加载对应 SKILL.md body（意图边界详情）
+        </div>
+        <div class="tl-item tl-phase2">
+          <span class="tl-stage" style="color:var(--green)">skill_reference_loaded</span>
+          <br>加载 reference 文件：slot_filling.md（提槽规则）+ workflow_request.md（API 调用方式）
+        </div>
+        <div class="tl-item tl-phase3">
+          <span class="tl-stage" style="color:var(--orange)">slots_extracted → workflow_call</span>
+          <br>LLM 按 reference 规则提槽 → 调用 workflow → 返回结果
+        </div>
+        <div class="tl-item tl-phase4">
+          <span class="tl-stage" style="color:var(--pink)">skill_unloaded</span>
+          <br>任务完成后卸载 skill 上下文 → 释放 token 空间 → 切换到下一个 skill
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:16px;">
+    <strong>核心衔接：</strong>两个流程通过 SkillLifecycleMiddleware 和 CompletionGateMiddleware 严格衔接。
+    任务流中每个 task 的执行都伴随对应 skill 的加载→执行→卸载周期。前端 /completion 接口是两个流程的交汇点。
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 5. SKILL STRUCTURE                                     -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">五、Skill 规范与渐进式加载</div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="badge badge-green">规范</span> Skill 目录结构</div>
+      <div class="skill-tree">
+        <span class="dir">skills/</span><br>
+        &nbsp;&nbsp;└── <span class="dir">transfer-routing/</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">SKILL.md</span> <span class="desc">← frontmatter: name, description, intent_codes, required_slots, references</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp; <span class="desc">body: 意图边界判定规则（Step1~Step4）</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">references/</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">slot_filling.md</span> <span class="desc">← 业务提槽逻辑（必填槽位、提取原则、不支持场景）</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="file">workflow_request.md</span> <span class="desc">← API 调用方式（URL、请求体、约束）</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-cyan" style="background:rgba(34,211,238,.15);color:var(--cyan)">加载策略</span> 渐进式三阶段</div>
+      <table>
+        <tr><th>阶段</th><th>加载内容</th><th>触发时机</th></tr>
+        <tr>
+          <td><span class="tag" style="background:rgba(56,189,248,.15);color:var(--accent)">Stage 1</span></td>
+          <td>name + description + intent_codes<br><small style="color:var(--text-dim)">SkillRegistry.all_metadata_summary()</small></td>
+          <td>首次 model call（无意图）</td>
+        </tr>
+        <tr>
+          <td><span class="tag" style="background:rgba(52,211,153,.15);color:var(--green)">Stage 2</span></td>
+          <td>SKILL.md body + ALL references<br><small style="color:var(--text-dim)">slot_filling.md + workflow_request.md</small></td>
+          <td>检测到 intent_code 后</td>
+        </tr>
+        <tr>
+          <td><span class="tag" style="background:rgba(248,113,113,.15);color:var(--red)">Unload</span></td>
+          <td>从系统提示词中移除 skill 块</td>
+          <td>任务完成 / 切换到下一个任务</td>
+        </tr>
+      </table>
+      <div class="note" style="margin-top:12px;">
+        <strong>关键：</strong>Stage 2 在 model call 之前注入，确保 LLM 按照 reference 中的业务规则提槽，而不是自由发挥。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 6. PROTOCOL                                            -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">六、协议与数据流</div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="badge badge-blue">INPUT</span> MessageRequest</div>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>sessionId</code></td><td>会话 ID</td></tr>
+        <tr><td><code>custID</code></td><td>用户 ID</td></tr>
+        <tr><td><code>txt</code></td><td>用户输入文本</td></tr>
+        <tr><td><code>stream</code></td><td>是否 SSE 流式返回</td></tr>
+        <tr><td><code>debugTrace</code></td><td>是否返回 trace 事件</td></tr>
+        <tr><td><code>executionMode</code></td><td>execute / router_only</td></tr>
+        <tr><td><code>recommendTask</code></td><td>推荐任务列表（可空）</td></tr>
+        <tr><td><code>currentDisplay</code></td><td>当前页面展示卡片（可空）</td></tr>
+        <tr><td><code>config_variables</code></td><td>透传变量</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-green">OUTPUT</span> AssistantProtocolFrame</div>
+      <table>
+        <tr><th>字段</th><th>说明</th></tr>
+        <tr><td><code>ok</code></td><td>是否成功</td></tr>
+        <tr><td><code>status</code></td><td>running / waiting_user_input / ready_for_dispatch / waiting_assistant_completion / completed / failed</td></tr>
+        <tr><td><code>intent_code</code></td><td>识别的意图编码</td></tr>
+        <tr><td><code>completion_state</code></td><td>0=未完成 / 1=等前端确认 / 2=全部完成</td></tr>
+        <tr><td><code>message</code></td><td>给用户的自然语言回复</td></tr>
+        <tr><td><code>slot_memory</code></td><td>当前任务已提取的槽位</td></tr>
+        <tr><td><code>task_list</code></td><td>任务列表</td></tr>
+        <tr><td><code>current_task</code></td><td>当前执行的任务</td></tr>
+        <tr><td><code>output</code></td><td>workflow 返回结果</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <div class="card-title"><span class="badge badge-yellow">SSE</span> 流式返回事件</div>
+    <div style="display:flex; gap:20px; flex-wrap:wrap;">
+      <div>
+        <p style="font-weight:600;color:var(--text);margin-bottom:6px;">协议事件</p>
+        <ul>
+          <li><code>event: assistant_protocol_frames</code> — 主响应帧</li>
+        </ul>
+      </div>
+      <div>
+        <p style="font-weight:600;color:var(--text);margin-bottom:6px;">Trace 事件（debugTrace=true）</p>
+        <ul>
+          <li><code>event: trace</code> — 细粒度过程事件，阶段包括：</li>
+          <li>&nbsp;&nbsp;&nbsp;request_received, deepagent_runtime_start</li>
+          <li>&nbsp;&nbsp;&nbsp;task_constraints_injected, frontend_context_injected</li>
+          <li>&nbsp;&nbsp;&nbsp;<strong style="color:var(--cyan)">skill_metadata_injected, skill_loaded, skill_reference_loaded</strong></li>
+          <li>&nbsp;&nbsp;&nbsp;intent_recognized, slots_extracted, task_planned</li>
+          <li>&nbsp;&nbsp;&nbsp;workflow_call_started, workflow_call_completed</li>
+          <li>&nbsp;&nbsp;&nbsp;completion_gate_triggered, skill_unloaded</li>
+          <li>&nbsp;&nbsp;&nbsp;protocol_frame_output</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 7. SESSION & CONCURRENCY                               -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">七、会话隔离与并发控制</div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="badge badge-green">SESSION</span> SessionManager</div>
+      <ul>
+        <li>📌 按 <code>(custID, sessionId)</code> 创建隔离 session</li>
+        <li>📌 映射到 deepagent 的 <code>thread_id = custID:sessionId</code></li>
+        <li>🔒 同 session 并发锁 — 同一时刻只允许一个 agent run</li>
+        <li>⏰ 空闲超时过期 — 默认 30 分钟，到期后重建</li>
+        <li>👤 用户绑定 — custID 必须匹配</li>
+        <li>🔄 锁释放后可复用 — 支持多轮对话</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-red">ERROR</span> 错误体系</div>
+      <table>
+        <tr><th>错误类型</th><th>code</th><th>触发场景</th></tr>
+        <tr><td>SessionBusyError</td><td><code>session_run_in_progress</code></td><td>同 session 并发</td></tr>
+        <tr><td>SessionExpiredError</td><td><code>session_expired</code></td><td>超时过期</td></tr>
+        <tr><td>WorkflowUrlNotAllowedError</td><td><code>workflow_url_not_allowed</code></td><td>URL 白名单拒绝</td></tr>
+        <tr><td>WorkflowExecutionError</td><td><code>workflow_execution_error</code></td><td>workflow 调用失败</td></tr>
+        <tr><td>ProtocolOutputError</td><td><code>protocol_output_error</code></td><td>输出格式不合规</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 8. CONFIG & DEPLOY                                     -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">八、配置与部署</div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><span class="badge badge-purple">CONFIG</span> TOML Spec 驱动</div>
+      <div style="font-family:monospace;font-size:12px;color:var(--text-dim);line-height:1.8;">
+        <span style="color:var(--accent)">[deepagent]</span><br>
+        &nbsp;&nbsp;model = "openai:Qwen/Qwen3-Coder-30B-A3B-Instruct"<br>
+        &nbsp;&nbsp;skills = ["/skills/"]<br>
+        &nbsp;&nbsp;max_iterations = 20<br><br>
+        <span style="color:var(--accent)">[workflow]</span><br>
+        &nbsp;&nbsp;allowed_urls = ["http://127.0.0.1:9876/"]<br><br>
+        <span style="color:var(--accent)">[session]</span><br>
+        &nbsp;&nbsp;idle_timeout_seconds = 1800<br><br>
+        <span style="color:var(--accent)">[backend]</span><br>
+        &nbsp;&nbsp;type = "auto"<br><br>
+        <span style="color:var(--accent)">agent_paths</span> = ["../agent.md"]<br>
+        <span style="color:var(--accent)">skill_roots</span> = ["../skills"]<br>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="badge badge-orange">DEPLOY</span> K8s 部署</div>
+      <ul>
+        <li>📦 <code>Deployment</code> — harness 服务副本，port 8765</li>
+        <li>🌐 <code>Service</code> — ClusterIP 内部服务暴露</li>
+        <li>🔧 <code>ConfigMap</code> — TOML spec + agent.md 挂载</li>
+        <li>🔐 <code>Secret</code> — LLM API Key</li>
+      </ul>
+      <hr class="sep">
+      <p style="font-weight:600;color:var(--text);margin-bottom:6px;">环境变量</p>
+      <ul>
+        <li><code>OPENAI_API_BASE</code> — LLM API 地址（标准 OpenAI SDK 变量）</li>
+        <li><code>OPENAI_API_KEY</code> — LLM API 密钥（标准 OpenAI SDK 变量）</li>
+        <li><code>HARNESS_SPEC_PATH</code> — TOML 配置路径</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- 9. DESIGN PRINCIPLES                                   -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-title">九、设计原则</div>
+  <div class="grid3">
+    <div class="card" style="border-left:3px solid var(--accent);">
+      <div class="card-title">不修改 SDK</div>
+      <p>deepagent SDK 作为纯依赖使用。Harness 只通过 middleware、tools、skills 参数对接，零侵入。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--green);">
+      <div class="card-title">业务零硬编码</div>
+      <p>所有业务逻辑（意图码、槽位、API 语义）全部在 skill 文件中声明。框架代码只做扫描/加载/卸载/校验。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--orange);">
+      <div class="card-title">渐进式加载</div>
+      <p>按需加载命中的 skill + reference，未命中的不加载。任务完成后立即卸载，避免上下文膨胀。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--pink);">
+      <div class="card-title">前端确认完成</div>
+      <p>Agent 不能自行标记任务完成。workflow 执行后 CompletionGate 终止循环，由前端 /completion 接口触发最终状态。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--accent2);">
+      <div class="card-title">多用户 Session 隔离</div>
+      <p>每个 (custID, sessionId) 有独立的 agent thread、并发锁和生命周期。不同用户完全隔离。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--yellow);">
+      <div class="card-title">先 Reference 再提槽</div>
+      <p>Skill reference 文件必须在 LLM 提槽之前注入上下文。保证提槽遵循业务规则，而不是 LLM 自由发挥。</p>
+    </div>
+  </div>
+</div>
+
+<div style="text-align:center; color:var(--text-dim); font-size:12px; margin-top:40px; padding-top:20px; border-top:1px solid var(--border);">
+  Intent Router Harness v2 · Enterprise Shell over DeepAgent SDK · 2025
+</div>
+
+</body>
+</html>
