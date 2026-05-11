@@ -252,7 +252,10 @@ def build_harness_middleware(
         def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:
             if not isinstance(msg, tool_message_cls):
                 return False
-            return getattr(msg, "name", "") == "workflow_api_call"
+            if getattr(msg, "name", "") != "workflow_api_call":
+                return False
+            content = getattr(msg, "content", "")
+            return not (isinstance(content, str) and content.startswith("Error: URL"))
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
@@ -347,8 +350,14 @@ def build_harness_middleware(
                 skill_count=len(self._registry.names()),
                 skill_names=list(self._registry.names()),
             )
+            instruction = (
+                "\n\n## Skill Loading Protocol\n"
+                "识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，"
+                "了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。"
+                "不要编造 workflow URL，必须使用 reference 文件中的完整地址。"
+            )
             system_message = SystemMessage(
-                content=f"{existing_text}\n\n{summary}" if existing_text else summary
+                content=f"{existing_text}\n\n{summary}{instruction}" if existing_text else f"{summary}{instruction}"
             )
             return request.override(system_message=system_message)
 
