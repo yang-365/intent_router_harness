@@ -33,10 +33,6 @@ from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_onc
 
 logger = logging.getLogger(__name__)
 
-# Shared prefix for URL-rejection messages returned by WorkflowGatewayMiddleware.
-# CompletionGateMiddleware uses this to distinguish rejections from real results.
-_WORKFLOW_URL_REJECTION_PREFIX = "Error: URL"
-
 
 def build_harness_middleware(
     *,
@@ -256,10 +252,7 @@ def build_harness_middleware(
         def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:
             if not isinstance(msg, tool_message_cls):
                 return False
-            if getattr(msg, "name", "") != "workflow_api_call":
-                return False
-            content = getattr(msg, "content", "")
-            return not (isinstance(content, str) and content.startswith(_WORKFLOW_URL_REJECTION_PREFIX))
+            return getattr(msg, "name", "") == "workflow_api_call"
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
@@ -718,7 +711,7 @@ def build_harness_middleware(
             )
             return ToolMessage(
                 content=(
-                    f"{_WORKFLOW_URL_REJECTION_PREFIX} '{url}' is not in the allowed list.\n"
+                    f"Error: URL '{url}' is not in the allowed list.\n"
                     f"Allowed URLs: {allowed_list}\n"
                     "Please use one of the allowed URLs from the skill's workflow_request reference."
                 ),
