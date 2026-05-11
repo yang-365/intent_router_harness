@@ -422,9 +422,9 @@ def build_harness_middleware(
         def _detect_target_skill(self, messages: list[Any]) -> str | None:
             """Scan recent messages for intent_code or skill name signals.
 
-            Business-agnostic: reads structured JSON from agent output,
-            checks tool calls, and scans plain-text mentions of known
-            intent codes registered in the skill registry.
+            Business-agnostic: reads structured JSON from agent output
+            and scans plain-text mentions of known intent codes
+            registered in the skill registry.
             """
             for msg in reversed(messages):
                 content = getattr(msg, "content", "")
@@ -450,26 +450,7 @@ def build_harness_middleware(
                             if meta:
                                 return meta.name
 
-                # Check tool calls for skill-related file read paths
-                tool_calls = getattr(msg, "tool_calls", None)
-                if tool_calls:
-                    for tc in tool_calls:
-                        args = tc.get("args", {}) if isinstance(tc, dict) else {}
-                        file_path = self._extract_file_path_from_args(args)
-                        if file_path and self._registry is not None:
-                            for name in self._registry.names():
-                                if name in file_path:
-                                    return name
             return None
-
-        @staticmethod
-        def _extract_file_path_from_args(args: dict[str, Any]) -> str:
-            """Extract file path from tool call args, checking common param names."""
-            for key in ("file_path", "path", "file_name"):
-                val = args.get(key)
-                if val:
-                    return str(val)
-            return ""
 
         def _extract_skill_from_payload(self, payload: dict[str, Any]) -> str | None:
             """Extract skill name from protocol JSON — business-agnostic."""
