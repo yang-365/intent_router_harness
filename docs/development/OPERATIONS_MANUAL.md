@@ -138,17 +138,31 @@ load = "metadata"
 cp .env.example .env
 ```
 
-`.env` 文件内容（使用 SiliconFlow 提供的 LLM）：
+`.env` 文件内容：
 
 ```bash
 # LLM 提供商配置（连接真实 LLM 时必填）
-# deepagent SDK 使用 langchain_openai (ChatOpenAI)，读取标准 OpenAI SDK 环境变量：
-OPENAI_API_BASE=https://api.siliconflow.cn/v1
-OPENAI_API_KEY=sk-your-real-key-here
+# Harness 读取 ROUTER_LLM_* 环境变量并映射到 ChatOpenAI 参数
+ROUTER_LLM_API_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ROUTER_LLM_API_KEY=sk-your-real-key-here
+ROUTER_LLM_MODEL=qwen3.6-flash-2026-04-16
+ROUTER_LLM_TEMPERATURE=0
+ROUTER_LLM_TIMEOUT_SECONDS=30
+ROUTER_LLM_ENABLE_THINKING=false
 ```
 
-> **重要：** 环境变量必须使用 `OPENAI_API_KEY` 和 `OPENAI_API_BASE`（标准 OpenAI SDK 变量名）。
-> LLM 模型在 TOML 配置文件的 `[deepagent].model` 中指定（如 `"openai:Qwen/Qwen3-Coder-30B-A3B-Instruct"`），不需要环境变量。
+**环境变量说明：**
+
+| 变量名 | 必填 | 说明 |
+|--------|------|------|
+| `ROUTER_LLM_API_BASE_URL` | 是 | LLM API 地址（如 DashScope、SiliconFlow） |
+| `ROUTER_LLM_API_KEY` | 是 | LLM API 密钥 |
+| `ROUTER_LLM_MODEL` | 否 | 模型名称（覆盖 TOML 中的 `[deepagent].model`） |
+| `ROUTER_LLM_TEMPERATURE` | 否 | 采样温度（默认不设置，由模型决定） |
+| `ROUTER_LLM_TIMEOUT_SECONDS` | 否 | 请求超时秒数 |
+| `ROUTER_LLM_ENABLE_THINKING` | 否 | 启用 thinking/reasoning 模式（`true`/`false`） |
+
+> **优先级：** `ROUTER_LLM_MODEL` 环境变量优先于 TOML 配置文件的 `[deepagent].model`。
 
 > **注意：** 单元测试不需要 LLM 凭据。只有 E2E 测试和生产运行需要。
 
@@ -1013,8 +1027,12 @@ kubectl -n intent create configmap intent-router-harness-code \
 
 ```bash
 kubectl -n intent create secret generic intent-router-harness-env \
-  --from-literal=OPENAI_API_BASE=https://api.siliconflow.cn/v1 \
-  --from-literal=OPENAI_API_KEY=sk-your-real-key \
+  --from-literal=ROUTER_LLM_API_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
+  --from-literal=ROUTER_LLM_API_KEY=sk-your-real-key \
+  --from-literal=ROUTER_LLM_MODEL=qwen3.6-flash-2026-04-16 \
+  --from-literal=ROUTER_LLM_TEMPERATURE=0 \
+  --from-literal=ROUTER_LLM_TIMEOUT_SECONDS=30 \
+  --from-literal=ROUTER_LLM_ENABLE_THINKING=false \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
@@ -1061,7 +1079,7 @@ http://intent-router.kkrrc-359.top/intent-router-harness/api/v1/message
 | Mock 服务无响应 | Mock 服务未启动 | 确认 Mock 端口与 TOML 配置一致 |
 | 工作流 URL 被拒绝 | URL 不在白名单 | 检查 TOML `[workflow].allowed_urls` 端口是否匹配 |
 | Session 过期 | 超过 idle_timeout | 使用新 sessionId 或调大 `[session].idle_timeout_seconds` |
-| `Missing credentials` / LLM 调用失败 | 环境变量名错误或 API key 无效 | 必须使用 `OPENAI_API_KEY` 和 `OPENAI_API_BASE`，不是 `ROUTER_LLM_*` |
+| `Missing credentials` / LLM 调用失败 | `ROUTER_LLM_API_KEY` 未设置或无效 | 检查 `.env` 中的 `ROUTER_LLM_API_KEY` 和 `ROUTER_LLM_API_BASE_URL` |
 | LLM 返回 "没有可用技能" | Skill 未被 deepagent 加载 | 检查 TOML 的 `skill_roots` 路径和 `[[bindings]]` 配置 |
 | Skill reference 未加载 | reference 文件路径错误 | 检查 skill frontmatter 中 `references` 字段的 `path` |
 | `completion_state` 一直是 0 | executionMode 为 router_only | 切换为 `execute` 模式触发 workflow 调用 |

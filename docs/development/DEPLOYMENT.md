@@ -17,11 +17,13 @@ curl -s http://127.0.0.1:8765/healthz
 Environment variables (see `.env.example`):
 
 ```bash
-OPENAI_API_BASE=https://api.siliconflow.cn/v1
-OPENAI_API_KEY=sk-your-real-key
+ROUTER_LLM_API_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ROUTER_LLM_API_KEY=sk-your-real-key
+ROUTER_LLM_MODEL=qwen3.6-flash-2026-04-16
+ROUTER_LLM_TEMPERATURE=0
+ROUTER_LLM_TIMEOUT_SECONDS=30
+ROUTER_LLM_ENABLE_THINKING=false
 ```
-
-> Model is configured in the TOML spec file (`[deepagent].model`), not via environment variable.
 
 ## Kubernetes
 
