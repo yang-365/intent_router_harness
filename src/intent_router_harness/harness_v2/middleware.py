@@ -354,17 +354,11 @@ def build_harness_middleware(
                 skill_count=len(self._registry.names()),
                 skill_names=list(self._registry.names()),
             )
-            tool_names = self._get_tool_names()
             instruction = (
                 "\n\n## Skill Loading Protocol\n"
-                "After identifying user intent, you MUST first read the matching "
-                "skill's reference files (via {read_tool}) to learn the slot-filling "
-                "rules and API invocation details BEFORE calling {workflow_tool}.\n"
-                "Do NOT fabricate workflow URLs — use only the exact addresses "
-                "found in the reference files."
-            ).format(
-                read_tool=tool_names["read_file"],
-                workflow_tool=tool_names["workflow_api_call"],
+                "识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，"
+                "了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。"
+                "不要编造 workflow URL，必须使用 reference 文件中的完整地址。"
             )
             system_message = SystemMessage(
                 content=f"{existing_text}\n\n{summary}{instruction}" if existing_text else f"{summary}{instruction}"
@@ -483,18 +477,6 @@ def build_harness_middleware(
                 if val:
                     return str(val)
             return ""
-
-        @staticmethod
-        def _get_tool_names() -> dict[str, str]:
-            """Return canonical tool names used by the deepagent runtime.
-
-            Centralised here so prompt templates and detection logic
-            stay in sync if tool names change.
-            """
-            return {
-                "read_file": "read_file",
-                "workflow_api_call": "workflow_api_call",
-            }
 
         def _extract_skill_from_payload(self, payload: dict[str, Any]) -> str | None:
             """Extract skill name from protocol JSON — business-agnostic."""
