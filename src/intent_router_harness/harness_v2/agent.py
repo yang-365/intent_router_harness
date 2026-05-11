@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from intent_router_harness.harness_v2.config import HarnessConfig
@@ -58,27 +59,61 @@ completion_state 取值：
 
 
 def _resolve_model(model_spec: str | None) -> Any:
-    """Resolve a model string to a BaseChatModel instance.
+    """Resolve a model string to a ``BaseChatModel`` instance.
 
-    For OpenAI-compatible providers, disables the Responses API which
-    many third-party providers (SiliconFlow, DeepSeek, etc.) do not support.
+    Reads ``ROUTER_LLM_*`` environment variables to configure the LLM
+    provider.  These take precedence over TOML config where applicable:
 
-    Args:
-        model_spec: Model string like ``"openai:model-name"`` or ``None``.
+    * ``ROUTER_LLM_API_BASE_URL`` — LLM API base URL
+    * ``ROUTER_LLM_API_KEY`` — LLM API key
+    * ``ROUTER_LLM_MODEL`` — model name (overrides TOML ``[deepagent].model``)
+    * ``ROUTER_LLM_TEMPERATURE`` — sampling temperature (default: not set)
+    * ``ROUTER_LLM_TIMEOUT_SECONDS`` — request timeout in seconds
+    * ``ROUTER_LLM_ENABLE_THINKING`` — enable thinking/reasoning mode
 
-    Returns:
-        A configured ``BaseChatModel`` instance, or the string as-is if
-        no special handling is needed.
+    For OpenAI-compatible providers the Responses API is disabled because
+    most third-party providers (SiliconFlow, DashScope, DeepSeek …) do not
+    support it.
     """
-    if not model_spec:
+    env_base_url = os.environ.get("ROUTER_LLM_API_BASE_URL")
+    env_api_key = os.environ.get("ROUTER_LLM_API_KEY")
+    env_model = os.environ.get("ROUTER_LLM_MODEL")
+    env_temperature = os.environ.get("ROUTER_LLM_TEMPERATURE")
+    env_timeout = os.environ.get("ROUTER_LLM_TIMEOUT_SECONDS")
+    env_thinking = os.environ.get("ROUTER_LLM_ENABLE_THINKING")
+
+    # Model name: env var overrides TOML spec.
+    effective_model = env_model or (model_spec.split(":", 1)[1] if model_spec and ":" in model_spec else None)
+    if not effective_model and not model_spec:
         return model_spec
+
     try:
-        from langchain.chat_models import init_chat_model
+        from langchain_openai import ChatOpenAI
     except ImportError:
         return model_spec
-    if model_spec.startswith("openai:"):
-        return init_chat_model(model_spec, use_responses_api=False)
-    return model_spec
+
+    kwargs: dict[str, Any] = {
+        "model": effective_model or model_spec,
+        "use_responses_api": False,
+    }
+    if env_base_url:
+        kwargs["base_url"] = env_base_url
+    if env_api_key:
+        kwargs["api_key"] = env_api_key
+    if env_temperature is not None:
+        kwargs["temperature"] = float(env_temperature)
+    if env_timeout is not None:
+        kwargs["request_timeout"] = float(env_timeout)
+    if env_thinking is not None:
+        kwargs["model_kwargs"] = {"enable_thinking": env_thinking.lower() in ("true", "1", "yes")}
+
+    logger.info(
+        "resolving LLM model=%s base_url=%s thinking=%s",
+        kwargs.get("model"),
+        kwargs.get("base_url", "(default)"),
+        env_thinking,
+    )
+    return ChatOpenAI(**kwargs)
 
 
 def build_agent(

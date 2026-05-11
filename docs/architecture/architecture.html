@@ -673,8 +673,12 @@
       <hr class="sep">
       <p style="font-weight:600;color:var(--text);margin-bottom:6px;">环境变量</p>
       <ul>
-        <li><code>OPENAI_API_BASE</code> — LLM API 地址（标准 OpenAI SDK 变量）</li>
-        <li><code>OPENAI_API_KEY</code> — LLM API 密钥（标准 OpenAI SDK 变量）</li>
+        <li><code>ROUTER_LLM_API_BASE_URL</code> — LLM API 地址</li>
+        <li><code>ROUTER_LLM_API_KEY</code> — LLM API 密钥</li>
+        <li><code>ROUTER_LLM_MODEL</code> — 模型名称（覆盖 TOML）</li>
+        <li><code>ROUTER_LLM_TEMPERATURE</code> — 采样温度</li>
+        <li><code>ROUTER_LLM_TIMEOUT_SECONDS</code> — 请求超时秒数</li>
+        <li><code>ROUTER_LLM_ENABLE_THINKING</code> — thinking 模式开关</li>
         <li><code>HARNESS_SPEC_PATH</code> — TOML 配置路径</li>
       </ul>
     </div>
