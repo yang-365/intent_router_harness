@@ -1062,7 +1062,243 @@ workflow_api_call(method="POST",
 </div>
 
 <!-- ============================================================ -->
-<h2>10. Middleware 与 LLM 的交互协议</h2>
+<h2>10. 加载与卸载的判断逻辑详解</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>10.1 Middleware 怎么判断"什么时候加载什么 skill"</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+    核心方法：<code>_detect_target_skill(messages)</code> — 每次 model call 之前调用，扫描 LLM <strong>之前的输出</strong>（历史消息）。
+  </p>
+
+  <div class="flow">
+    <div class="flow-step phase-1" data-step="1">
+      <div class="step-title">扫描历史消息（从最新到最旧）</div>
+      <div class="step-detail">
+        遍历 <code>request.messages</code> 中所有消息（<code>reversed(messages)</code>），逐条检查 LLM 的历史输出。<br>
+        <strong>注意：检测的是 LLM 之前输出的消息，不是当前这次 model call 的输出。</strong>
+      </div>
+    </div>
+    <div class="flow-step phase-1" data-step="2">
+      <div class="step-title">Level 1 — JSON intent_code（优先级最高）</div>
+      <div class="step-detail">
+        尝试将消息内容解析为 JSON，在以下位置查找 <code>intent_code</code> 字段：<br>
+        &bull; <code>payload["frames"][i]["intent_code"]</code> — protocol frame 中的意图码<br>
+        &bull; <code>payload["frames"][i]["current_task"]["intent_code"]</code> — 当前任务的意图码<br>
+        &bull; <code>payload["intent_code"]</code> — 顶层意图码<br>
+        &bull; <code>payload["current_task"]["intent_code"]</code> — 顶层当前任务<br>
+        找到后通过 <code>_intent_index[intent_code]</code> → skill_name
+      </div>
+      <div class="step-code">消息内容: {"frames": [{"intent_code": "AG_TRANS", ...}]}
+→ intent_code = "AG_TRANS"
+→ _intent_index["AG_TRANS"] = "transfer-routing"
+→ 返回 "transfer-routing"</div>
+    </div>
+    <div class="flow-step phase-1" data-step="3">
+      <div class="step-title">Level 2 — 文本扫描已注册的 intent_code（兜底）</div>
+      <div class="step-detail">
+        如果 JSON 解析失败或未找到 intent_code，则遍历 <code>_intent_index</code> 中所有已注册的 intent_code，<br>
+        检查 LLM 输出文本中是否<strong>包含</strong>该字符串。
+      </div>
+      <div class="step-code">消息内容: "用户想要转账，意图为 AG_TRANS，需要提取收款人..."
+→ "AG_TRANS" in content → True
+→ _intent_index["AG_TRANS"] = "transfer-routing"
+→ 返回 "transfer-routing"</div>
+    </div>
+    <div class="flow-step phase-1" data-step="4">
+      <div class="step-title">未检测到 → 返回 None</div>
+      <div class="step-detail">
+        如果所有消息都未匹配到任何 intent_code → 返回 <code>None</code>。<br>
+        此时 middleware 执行 Phase 1（注入 metadata 摘要）或 Phase 3（保持当前 skill）。
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:24px;">_prepare_skill_context() 加载决策矩阵</h3>
+
+  <table>
+    <tr>
+      <th><code>_detect_target_skill</code> 结果</th>
+      <th><code>self._loaded_skill</code></th>
+      <th>判断</th>
+      <th>执行动作</th>
+    </tr>
+    <tr>
+      <td><code>None</code></td>
+      <td><code>None</code></td>
+      <td>首次调用，尚未识别任何意图</td>
+      <td style="background:var(--accent-light);"><strong>Phase 1</strong>：注入 metadata 摘要</td>
+    </tr>
+    <tr>
+      <td><code>"transfer-routing"</code></td>
+      <td><code>None</code></td>
+      <td>首次检测到意图，还没加载过 skill</td>
+      <td style="background:var(--green-light);"><strong>Phase 2（首次加载）</strong>：加载 skill body + 所有 references</td>
+    </tr>
+    <tr>
+      <td><code>"transfer-routing"</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>同一个 skill，多轮对话中</td>
+      <td style="background:var(--purple-light);"><strong>Phase 3（持续注入）</strong>：重新注入 skill block</td>
+    </tr>
+    <tr>
+      <td><code>None</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>有已加载的 skill，但没检测到新意图</td>
+      <td style="background:var(--purple-light);"><strong>Phase 3（持续注入）</strong>：保持当前 skill</td>
+    </tr>
+    <tr>
+      <td><code>"bill-payment-routing"</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>检测到不同的意图！</td>
+      <td style="background:var(--orange-light);"><strong>卸载 + 加载</strong>：卸载旧 skill，加载新 skill</td>
+    </tr>
+  </table>
+
+  <div class="decision-box" style="margin-top:16px;">
+    <strong>Reference 的加载逻辑：</strong><br>
+    Reference 不是单独按需加载的 — 它随 skill body 一起在 Phase 2 <strong>一次性全部加载</strong>。<br>
+    具体加载哪些 reference 完全由 SKILL.md frontmatter 的 <code>references</code> 字段决定：<br>
+    <code>_build_skill_block()</code> 遍历 <code>meta.references</code> → 逐个 <code>load_reference(skill_name, ref.id)</code>。<br>
+    声明了几个 reference 就加载几个。如果 skill 没有声明 references，就只加载 skill body。
+  </div>
+</div>
+
+<div class="section-card">
+  <h3>10.2 Middleware 怎么判断"什么时候卸载 skill"</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+    <strong>卸载触发条件只有一个：检测到新的、不同的 intent_code。</strong>
+  </p>
+
+  <div class="decision-box">
+    <code>_prepare_skill_context()</code> 中的卸载判断：<br><br>
+    <strong>必须同时满足三个条件：</strong><br>
+    ① <code>target_skill != None</code> — 检测到了一个意图<br>
+    ② <code>target_skill != self._loaded_skill</code> — 这个意图对应的 skill 和当前已加载的<strong>不同</strong><br>
+    ③ <code>self._loaded_skill != None</code> — 当前确实有一个已加载的 skill<br><br>
+    三个条件缺任何一个都不会触发卸载。
+  </div>
+
+  <h3 style="margin-top:24px;">卸载时序（多任务场景）</h3>
+
+  <table>
+    <tr>
+      <th>时间点</th>
+      <th><code>_loaded_skill</code></th>
+      <th><code>_detect_target_skill</code></th>
+      <th>三个条件</th>
+      <th>是否卸载</th>
+    </tr>
+    <tr>
+      <td>用户发"给张三转账500元，缴电费200元"</td>
+      <td><code>None</code></td>
+      <td><code>None</code></td>
+      <td>条件①不满足</td>
+      <td>否 → Phase 1</td>
+    </tr>
+    <tr>
+      <td>Model Call #1 输出了 AG_TRANS</td>
+      <td><code>None</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>条件③不满足（没有已加载 skill）</td>
+      <td>否 → Phase 2（首次加载）</td>
+    </tr>
+    <tr>
+      <td>Model Call #2 提槽</td>
+      <td><code>"transfer-routing"</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>条件②不满足（同一个 skill）</td>
+      <td>否 → Phase 3</td>
+    </tr>
+    <tr>
+      <td>Model Call #3 调用 workflow</td>
+      <td><code>"transfer-routing"</code></td>
+      <td><code>"transfer-routing"</code></td>
+      <td>条件②不满足</td>
+      <td>否 → Phase 3</td>
+    </tr>
+    <tr>
+      <td>CompletionGate 触发，前端确认完成</td>
+      <td><code>"transfer-routing"</code></td>
+      <td>—（无 model call）</td>
+      <td>—</td>
+      <td>否（循环已终止）</td>
+    </tr>
+    <tr>
+      <td>用户发"继续"，LLM 推进到 AG_PAY_BILL</td>
+      <td><code>"transfer-routing"</code></td>
+      <td><code>"bill-payment-routing"</code></td>
+      <td style="background:var(--orange-light);">①✓ ②✓ ③✓ <strong>全部满足</strong></td>
+      <td style="background:var(--orange-light);"><strong>是 → 卸载 + 加载新 skill</strong></td>
+    </tr>
+  </table>
+
+  <h3 style="margin-top:24px;">不会触发卸载的情况</h3>
+
+  <table>
+    <tr><th>场景</th><th>原因</th></tr>
+    <tr>
+      <td>同一 skill 的多轮对话（提槽、追问、补槽）</td>
+      <td><code>target_skill == _loaded_skill</code>，条件②不满足</td>
+    </tr>
+    <tr>
+      <td><code>_detect_target_skill</code> 返回 None</td>
+      <td>历史消息中没有新的 intent_code，条件①不满足</td>
+    </tr>
+    <tr>
+      <td>当前没有加载任何 skill（<code>_loaded_skill == None</code>）</td>
+      <td>不存在可卸载的 skill，条件③不满足</td>
+    </tr>
+    <tr>
+      <td>任务完成（前端调用 <code>/completion</code> 接口）</td>
+      <td>middleware 不会因"任务完成"主动卸载。<code>_loaded_skill</code> 保持不变，<br>
+      只有当下一个任务的 intent_code 出现在 LLM 输出中，才触发卸载+切换</td>
+    </tr>
+    <tr>
+      <td>用户发送普通聊天（非业务意图）</td>
+      <td><code>_detect_target_skill</code> 返回 None，条件①不满足。<br>
+      如果之前有加载过 skill，继续 Phase 3 保持当前 skill</td>
+    </tr>
+  </table>
+
+  <h3 style="margin-top:24px;">卸载的实际操作</h3>
+
+  <div class="flow">
+    <div class="flow-step phase-unload" data-step="1">
+      <div class="step-title">emit trace: skill_unloaded</div>
+      <div class="step-detail">
+        记录日志和 trace 事件，标记旧 skill 被卸载。
+      </div>
+      <div class="step-trace trace-orange">skill_unloaded: 卸载技能: transfer-routing</div>
+    </div>
+    <div class="flow-step phase-unload" data-step="2">
+      <div class="step-title">更新内部状态：_loaded_skill = 新 skill name</div>
+      <div class="step-detail">
+        <code>self._loaded_skill = "bill-payment-routing"</code>
+      </div>
+    </div>
+    <div class="flow-step phase-unload" data-step="3">
+      <div class="step-title">_inject_skill_with_references() — 替换 system prompt</div>
+      <div class="step-detail">
+        <strong>卸载 = 替换 system prompt 中的 skill block：</strong><br>
+        &bull; 检测 system prompt 中是否有 <code>"## Loaded Skill:"</code> 标记<br>
+        &bull; 如果有 → 截断该标记之后的所有内容（旧 skill body + references 全部移除）<br>
+        &bull; 追加新 skill 的 block（body + references）<br>
+        <strong>没有独立的"清除内存"步骤。</strong>卸载和加载是同一个操作的两个部分：截断旧 block + 追加新 block。
+      </div>
+      <div class="step-code">system_prompt = "...## Loaded Skill: transfer-routing\n\n{旧body}\n### Reference: slot_filling..."
+                                      ↓ 截断
+system_prompt = "..."
+                                      ↓ 追加新 block
+system_prompt = "...\n\n## Loaded Skill: bill-payment-routing\n\n{新body}\n..."</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>11. Middleware 与 LLM 的交互协议</h2>
 <!-- ============================================================ -->
 
 <div class="section-card">
