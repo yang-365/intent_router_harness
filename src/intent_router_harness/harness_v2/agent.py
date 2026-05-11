@@ -104,8 +104,8 @@ def _resolve_model(model_spec: str | None) -> Any:
         kwargs["temperature"] = float(env_temperature)
     if env_timeout is not None:
         kwargs["request_timeout"] = float(env_timeout)
-    if env_thinking is not None:
-        kwargs["model_kwargs"] = {"enable_thinking": env_thinking.lower() in ("true", "1", "yes")}
+    if env_thinking is not None and env_thinking.lower() in ("true", "1", "yes"):
+        kwargs["model_kwargs"] = {"enable_thinking": True}
 
     logger.info(
         "resolving LLM model=%s base_url=%s thinking=%s",
