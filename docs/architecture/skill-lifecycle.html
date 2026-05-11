@@ -1061,6 +1061,352 @@ workflow_api_call(method="POST",
   </table>
 </div>
 
+<!-- ============================================================ -->
+<h2>10. Middleware 与 LLM 的交互协议</h2>
+<!-- ============================================================ -->
+
+<div class="section-card">
+  <h3>10.1 两条并行的 Skill 内容获取路径</h3>
+
+  <div class="two-col">
+    <div style="background:var(--accent-light);border-radius:8px;padding:16px;">
+      <h3 style="color:#1d4ed8;margin-top:0;">路径 A — 被动注入（SkillLifecycleMiddleware）</h3>
+      <p style="font-size:13px;color:#1e40af;">
+        Middleware 在每次 model call <strong>之前</strong>自动修改 system prompt，注入 skill 内容。<br>
+        LLM 不需要主动操作，不知道 middleware 的存在。<br>
+        LLM 感知到的只是 "system prompt 里多了一段内容"。
+      </p>
+      <div class="step-code" style="font-size:11px;">
+Model Call 开始
+  → SkillLifecycleMiddleware.wrap_model_call()
+    → 修改 request.system_message
+      → 注入 "## Available Skills" 或 "## Loaded Skill: xxx"
+    → handler(modified_request)  ← LLM 看到修改后的 prompt
+  → LLM 返回结果</div>
+    </div>
+
+    <div style="background:var(--green-light);border-radius:8px;padding:16px;">
+      <h3 style="color:#065f46;margin-top:0;">路径 B — 主动读取（SkillFileMiddleware）</h3>
+      <p style="font-size:13px;color:#065f46;">
+        LLM 根据 Skill Loading Protocol 指令，主动发出 <code>read_file</code> function call。<br>
+        Middleware 拦截 tool call，从 SkillRegistry 返回内容。<br>
+        LLM 感知到的是 "我调用了 read_file 工具，拿到了文件内容"。
+      </p>
+      <div class="step-code" style="font-size:11px;">
+LLM 输出 tool_call: read_file("/skills/transfer-routing/references/workflow_request.md")
+  → SkillFileMiddleware.wrap_tool_call()
+    → 路径以 /skills/ 开头？ 是
+    → _resolve_virtual_path() → SkillRegistry.load_reference()
+    → 返回 ToolMessage(content=reference_body)
+  → LLM 收到 reference 内容</div>
+    </div>
+  </div>
+
+  <div class="decision-box" style="margin-top:16px;">
+    <strong>两条路径并存的原因：</strong><br>
+    &bull; 路径 A（被动注入）是主要路径 — Phase 2 时 middleware 已经把 reference 内容注入到 system prompt<br>
+    &bull; 路径 B（主动读取）是补充路径 — 如果 LLM 需要再次查看某个 reference，或者想读取 Phase 2 未覆盖的文件<br>
+    &bull; 实际运行中，两条路径可能同时生效：system prompt 里有 reference 内容，LLM 又通过 read_file 读了一遍
+  </div>
+</div>
+
+<!-- ---- Interaction Protocol ---- -->
+<div class="section-card">
+  <h3>10.2 deepagent AgentMiddleware 接口协议</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+    Middleware 实现 deepagent SDK 的 <code>AgentMiddleware</code> 接口。SDK 在 agent 循环中自动调用 middleware 的 hook 方法。
+    Middleware 和 LLM 之间没有专门的通信协议 — middleware 通过修改 request/response 来间接影响 LLM 行为。
+  </p>
+
+  <table>
+    <tr><th>Hook 方法</th><th>调用时机</th><th>Middleware 可做的事</th><th>Skill 相关用途</th></tr>
+    <tr>
+      <td><code>wrap_model_call(request, handler)</code></td>
+      <td>每次调用 LLM <strong>之前</strong></td>
+      <td>
+        &bull; 读取 <code>request.messages</code>（历史消息）<br>
+        &bull; 修改 <code>request.system_message</code>（system prompt）<br>
+        &bull; 调用 <code>request.override(system_message=...)</code> 返回修改后的 request<br>
+        &bull; 调用 <code>handler(request)</code> 让 LLM 执行<br>
+        &bull; 检查 handler 返回的结果<br>
+        &bull; 决定是否终止 agent 循环
+      </td>
+      <td>
+        <strong>SkillLifecycleMiddleware：</strong><br>
+        Phase 1: 注入 metadata 摘要<br>
+        Phase 2: 注入 skill body + references<br>
+        Phase 3: 重新注入 skill block<br>
+        卸载: 替换 skill block
+      </td>
+    </tr>
+    <tr>
+      <td><code>wrap_tool_call(request, handler)</code></td>
+      <td>LLM 发出 function call <strong>之后</strong>，实际执行<strong>之前</strong></td>
+      <td>
+        &bull; 读取 tool_name 和 tool_args<br>
+        &bull; 拦截并返回自定义 ToolMessage（不执行原始 handler）<br>
+        &bull; 修改 tool_args 后透传给 handler<br>
+        &bull; 调用 handler 后修改返回结果
+      </td>
+      <td>
+        <strong>SkillFileMiddleware：</strong><br>
+        拦截 read_file(/skills/...) → 从 Registry 返回<br><br>
+        <strong>WorkflowGatewayMiddleware：</strong><br>
+        拦截 workflow_api_call → 检查 URL 白名单
+      </td>
+    </tr>
+  </table>
+</div>
+
+<!-- ---- What LLM sees ---- -->
+<div class="section-card">
+  <h3>10.3 LLM 视角 — 它看到了什么</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+    LLM 完全不知道 middleware 的存在。从 LLM 的角度，它只是在和一个带有 system prompt 和工具的 agent 环境交互。
+  </p>
+
+  <table>
+    <tr><th>LLM 看到的</th><th>实际来源</th><th>LLM 的理解</th></tr>
+    <tr>
+      <td>System prompt 中出现 <code>## Available Skills</code></td>
+      <td>SkillLifecycleMiddleware Phase 1 自动注入</td>
+      <td>"我知道有哪些技能可以匹配用户意图"</td>
+    </tr>
+    <tr>
+      <td>System prompt 中出现 <code>## Skill Loading Protocol</code></td>
+      <td>SkillLifecycleMiddleware Phase 1 自动注入</td>
+      <td>"识别意图后要先 read_file 读 reference，再调 workflow_api_call"</td>
+    </tr>
+    <tr>
+      <td>System prompt 中出现 <code>## Loaded Skill: transfer-routing</code> + body + references</td>
+      <td>SkillLifecycleMiddleware Phase 2 自动注入</td>
+      <td>"我现在有了这个技能的完整提槽规则和 API 调用方式"</td>
+    </tr>
+    <tr>
+      <td><code>read_file</code> 工具可用</td>
+      <td>deepagent SDK 注册的标准工具</td>
+      <td>"我可以用这个工具读取文件"</td>
+    </tr>
+    <tr>
+      <td>调用 <code>read_file("/skills/transfer-routing/SKILL.md")</code> 得到内容</td>
+      <td>SkillFileMiddleware 拦截，从 Registry 返回</td>
+      <td>"我成功读到了这个技能文件的内容"（不知道是虚拟路径）</td>
+    </tr>
+    <tr>
+      <td><code>workflow_api_call</code> 工具可用</td>
+      <td>deepagent SDK 注册的标准工具</td>
+      <td>"我可以用这个工具调用工作流 API"</td>
+    </tr>
+    <tr>
+      <td>调用 <code>workflow_api_call</code> 后收到 "Error: URL not in allowed list"</td>
+      <td>WorkflowGatewayMiddleware 拦截</td>
+      <td>"URL 不对，我需要用 reference 里的正确地址"</td>
+    </tr>
+    <tr>
+      <td>调用 <code>workflow_api_call</code> 后收到工作流结果</td>
+      <td>WorkflowGatewayMiddleware 透传到真实 workflow 服务器</td>
+      <td>"工作流执行成功，我可以把结果告诉用户"</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ---- Interaction Timeline ---- -->
+<div class="section-card">
+  <h3>10.4 完整交互时序（单任务：转账）</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+    展示用户输入"给张三转账500元"后，middleware 和 LLM 之间的每一次交互。
+  </p>
+
+  <div class="flow">
+    <div class="flow-step phase-1" data-step="1">
+      <div class="step-title">用户输入 → API 创建 HumanMessage</div>
+      <div class="step-detail">
+        <code>POST /api/v1/message</code> → <code>SessionManager.run()</code> → deepagent 开始 agent 循环
+      </div>
+    </div>
+
+    <div class="flow-step phase-1" data-step="2">
+      <div class="step-title">Model Call #1 前 — 7 个 middleware 依次执行 wrap_model_call</div>
+      <div class="step-detail">
+        <strong>① TaskProgressMiddleware：</strong>注入 "## Task Execution Constraints" 到 system prompt<br>
+        <strong>② FrontendContextMiddleware：</strong>如果有 recommendTask/currentDisplay → 注入 "## Frontend Context"<br>
+        <strong>③ CompletionGateMiddleware：</strong>检查消息中是否有 workflow 结果 → 无 → 跳过<br>
+        <strong>④ SkillLifecycleMiddleware：</strong>_detect_target_skill → None → Phase 1: 注入 metadata 摘要<br>
+        <strong>⑤ SkillFileMiddleware：</strong>无 tool call → 跳过（只在 wrap_tool_call 中工作）<br>
+        <strong>⑥ WorkflowGatewayMiddleware：</strong>无 tool call → 跳过<br>
+        <strong>⑦ ProtocolOutputMiddleware：</strong>准备输出格式
+      </div>
+      <div class="step-trace trace-blue">task_constraints_injected</div>
+      <div class="step-trace trace-blue">skill_metadata_injected: 2 个技能摘要</div>
+    </div>
+
+    <div class="flow-step phase-1" data-step="3">
+      <div class="step-title">Model Call #1 — LLM 执行</div>
+      <div class="step-detail">
+        LLM 看到 system prompt 中的技能列表，识别出转账意图。<br>
+        输出包含 <code>AG_TRANS</code>（可能是 JSON intent_code 或文本中提及）。<br>
+        LLM 可能同时调用 <code>read_file("/skills/transfer-routing/SKILL.md")</code>。
+      </div>
+    </div>
+
+    <div class="flow-step phase-2" data-step="4">
+      <div class="step-title">Tool Call — SkillFileMiddleware 拦截 read_file</div>
+      <div class="step-detail">
+        如果 LLM 调用了 <code>read_file</code>：<br>
+        <strong>⑤ SkillFileMiddleware.wrap_tool_call()：</strong><br>
+        &bull; tool_name == "read_file" → 是<br>
+        &bull; path 以 "/skills/" 开头 → 是<br>
+        &bull; _resolve_virtual_path() → 从 Registry 返回 SKILL.md body<br>
+        &bull; 返回 ToolMessage，不执行真实文件读取
+      </div>
+      <div class="step-trace trace-green">skill_file_read: /skills/transfer-routing/SKILL.md</div>
+    </div>
+
+    <div class="flow-step phase-2" data-step="5">
+      <div class="step-title">Model Call #2 前 — SkillLifecycleMiddleware 检测到意图</div>
+      <div class="step-detail">
+        <strong>④ SkillLifecycleMiddleware.wrap_model_call()：</strong><br>
+        &bull; _detect_target_skill(messages) → 扫描到 "AG_TRANS" → 查找 _intent_index → "transfer-routing"<br>
+        &bull; target_skill="transfer-routing", _loaded_skill=None → Phase 2<br>
+        &bull; _loaded_skill = "transfer-routing"<br>
+        &bull; _build_skill_block()：<br>
+        &emsp;- load_skill_body("transfer-routing") → 读取 SKILL.md body<br>
+        &emsp;- 遍历 meta.references → load_reference("slot_filling") + load_reference("workflow_request")<br>
+        &emsp;- 组装 "## Loaded Skill: transfer-routing\n\n{body}\n### Reference: slot_filling...\n### Reference: workflow_request..."<br>
+        &bull; 截断旧 system prompt 中的 skill block（如果有），追加新 block
+      </div>
+      <div class="step-trace trace-green">skill_loaded: transfer-routing</div>
+      <div class="step-trace trace-green">skill_reference_loaded: slot_filling, workflow_request</div>
+    </div>
+
+    <div class="flow-step phase-2" data-step="6">
+      <div class="step-title">Model Call #2 — LLM 按 reference 提槽</div>
+      <div class="step-detail">
+        LLM 现在看到 system prompt 中有完整的：<br>
+        &bull; slot_filling.md: payee_name 和 amount 是必填，提取规则<br>
+        &bull; workflow_request.md: 完整的 workflow URL 和请求体格式<br>
+        LLM 提取槽位：<code>payee_name=张三, amount=500</code><br>
+        LLM 调用 <code>workflow_api_call(method="POST", url="http://127.0.0.1:9877/...", body={...})</code>
+      </div>
+    </div>
+
+    <div class="flow-step phase-2" data-step="7">
+      <div class="step-title">Tool Call — WorkflowGatewayMiddleware 处理 workflow_api_call</div>
+      <div class="step-detail">
+        <strong>⑥ WorkflowGatewayMiddleware.wrap_tool_call()：</strong><br>
+        &bull; tool_name == "workflow_api_call" → 是<br>
+        &bull; _check_url(): URL 在 allowed_urls 白名单中 → 通过<br>
+        &bull; 执行 before_workflow hooks（如果有）<br>
+        &bull; handler(request) → 真实 HTTP 调用 workflow 服务器<br>
+        &bull; 执行 after_workflow hooks（如果有）<br>
+        &bull; 返回 ToolMessage(content=workflow_response)
+      </div>
+      <div class="step-trace trace-green">workflow_call_started</div>
+      <div class="step-trace trace-green">workflow_call_completed</div>
+    </div>
+
+    <div class="flow-step phase-complete" data-step="8">
+      <div class="step-title">Model Call #3 前 — CompletionGate 检测到 workflow 结果</div>
+      <div class="step-detail">
+        <strong>③ CompletionGateMiddleware.wrap_model_call()：</strong><br>
+        &bull; 扫描最新消息 → 找到 name="workflow_api_call" 的 ToolMessage<br>
+        &bull; _is_workflow_result() → True<br>
+        &bull; <strong>终止 agent 循环</strong> → 不调用 handler，直接返回<br>
+        &bull; 返回包含 <code>completion_state=1, status=waiting_assistant_completion</code> 的 AIMessage<br>
+        &bull; 前端收到后展示完成按钮
+      </div>
+      <div class="step-trace trace-red">completion_gate_triggered</div>
+    </div>
+
+    <div class="flow-step phase-complete" data-step="9">
+      <div class="step-title">前端确认 → completion_state=2</div>
+      <div class="step-detail">
+        用户点击"模拟完成当前任务" → <code>POST /api/v1/task/completion</code> (completionSignal=1)<br>
+        返回 <code>completion_state=2, status=completed</code>。任务结束。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ---- Middleware Chain Diagram ---- -->
+<div class="section-card">
+  <h3>10.5 Middleware 链执行顺序图</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+    7 个 middleware 按固定顺序执行。每个 middleware 有两类 hook：<code>wrap_model_call</code>（model call 前后）和 <code>wrap_tool_call</code>（tool call 前后）。
+    不是所有 middleware 都实现两类 hook。
+  </p>
+
+  <table>
+    <tr>
+      <th>#</th>
+      <th>Middleware</th>
+      <th><code>wrap_model_call</code></th>
+      <th><code>wrap_tool_call</code></th>
+      <th>对 LLM 的影响</th>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td><strong>TaskProgressMiddleware</strong></td>
+      <td style="background:var(--green-light);">注入任务执行约束到 system prompt</td>
+      <td style="background:var(--gray-light);">—</td>
+      <td>LLM 看到串行执行、不自行完成任务等规则</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><strong>FrontendContextMiddleware</strong></td>
+      <td style="background:var(--green-light);">注入 recommendTask / currentDisplay</td>
+      <td style="background:var(--gray-light);">—</td>
+      <td>LLM 看到前端推荐卡片和当前页面展示内容</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><strong>CompletionGateMiddleware</strong></td>
+      <td style="background:var(--red-light);">检测 workflow 结果 → 终止循环</td>
+      <td style="background:var(--gray-light);">—</td>
+      <td>workflow 返回后 LLM 不再被调用（循环被终止）</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><strong>SkillLifecycleMiddleware</strong></td>
+      <td style="background:var(--green-light);">Phase 1/2/3: 注入 skill 内容到 system prompt</td>
+      <td style="background:var(--gray-light);">—</td>
+      <td>LLM 看到技能元数据 / 完整 skill body + references</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><strong>SkillFileMiddleware</strong></td>
+      <td style="background:var(--gray-light);">—</td>
+      <td style="background:var(--green-light);">拦截 read_file(/skills/...) → 从 Registry 返回</td>
+      <td>LLM 调用 read_file 得到 skill 文件内容（虚拟路径）</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><strong>WorkflowGatewayMiddleware</strong></td>
+      <td style="background:var(--gray-light);">—</td>
+      <td style="background:var(--green-light);">URL 白名单校验 + before/after hooks</td>
+      <td>LLM 调用 workflow_api_call 被校验 URL，通过后执行 HTTP 调用</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><strong>ProtocolOutputMiddleware</strong></td>
+      <td style="background:var(--green-light);">格式化输出为 AssistantProtocolFrame</td>
+      <td style="background:var(--gray-light);">—</td>
+      <td>LLM 输出被转换为标准协议帧格式</td>
+    </tr>
+  </table>
+
+  <div class="decision-box" style="margin-top:16px;">
+    <strong>执行模型：</strong><br>
+    &bull; <code>wrap_model_call</code>：按 1→2→3→4→5→6→7 顺序，在 LLM 调用前修改 system prompt 或决定是否终止循环<br>
+    &bull; <code>wrap_tool_call</code>：按 1→2→3→4→5→6→7 顺序，在 tool 执行前拦截或修改。只有 #5 和 #6 实现了此 hook<br>
+    &bull; 每个 middleware 可以选择：(a) 修改 request 后透传给 handler，(b) 直接返回结果（不调用 handler），(c) 不做任何事透传
+  </div>
+</div>
+
 <div style="text-align:center;padding:32px 0;color:var(--muted);font-size:13px;">
   Intent Router Harness &mdash; Skill Lifecycle Diagram &mdash; Generated 2026-05-10
 </div>
