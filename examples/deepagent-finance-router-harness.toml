@@ -12,9 +12,9 @@ max_reference_count = 4
 
 [workflow]
 allowed_urls = [
-  "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
-  "http://127.0.0.1:9876/agent-api/workflow-agent-payee/chatabc/use_as_tool",
-  "http://127.0.0.1:9876/agent-api/workflow-agent-bill/chatabc/use_as_tool",
+  "http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool",
+  "http://127.0.0.1:9877/agent-api/workflow-agent-payee/chatabc/use_as_tool",
+  "http://127.0.0.1:9877/agent-api/workflow-agent-bill/chatabc/use_as_tool",
 ]
 
 [session]

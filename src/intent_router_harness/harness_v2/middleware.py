@@ -347,8 +347,14 @@ def build_harness_middleware(
                 skill_count=len(self._registry.names()),
                 skill_names=list(self._registry.names()),
             )
+            instruction = (
+                "\n\n## Skill Loading Protocol\n"
+                "识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，"
+                "了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。"
+                "不要编造 workflow URL，必须使用 reference 文件中的完整地址。"
+            )
             system_message = SystemMessage(
-                content=f"{existing_text}\n\n{summary}" if existing_text else summary
+                content=f"{existing_text}\n\n{summary}{instruction}" if existing_text else f"{summary}{instruction}"
             )
             return request.override(system_message=system_message)
 
@@ -416,20 +422,34 @@ def build_harness_middleware(
         def _detect_target_skill(self, messages: list[Any]) -> str | None:
             """Scan recent messages for intent_code or skill name signals.
 
-            Business-agnostic: reads structured JSON from agent output,
-            does not hard-code any intent codes.
+            Business-agnostic: reads structured JSON from agent output
+            and scans plain-text mentions of known intent codes
+            registered in the skill registry.
             """
             for msg in reversed(messages):
                 content = getattr(msg, "content", "")
-                if not isinstance(content, str) or not content.strip().startswith("{"):
+                if not isinstance(content, str):
                     continue
-                try:
-                    payload = json.loads(content)
-                except json.JSONDecodeError:
-                    continue
-                skill_name = self._extract_skill_from_payload(payload)
-                if skill_name:
-                    return skill_name
+
+                # Try structured JSON first
+                stripped = content.strip()
+                if stripped.startswith("{"):
+                    try:
+                        payload = json.loads(stripped)
+                        skill_name = self._extract_skill_from_payload(payload)
+                        if skill_name:
+                            return skill_name
+                    except json.JSONDecodeError:
+                        pass
+
+                # Scan plain-text for known intent codes
+                if self._registry is not None:
+                    for intent_code in self._registry.intent_codes():
+                        if intent_code in content:
+                            meta = self._registry.find_by_intent(intent_code)
+                            if meta:
+                                return meta.name
+
             return None
 
         def _extract_skill_from_payload(self, payload: dict[str, Any]) -> str | None:
