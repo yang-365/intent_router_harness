@@ -2,10 +2,14 @@
 
 The executor is a stateless, single-pass component that sits between the
 planner and the HTTP workflow layer.  It receives the planner's slot-filling
-result, loads the skill's ``workflow_request`` reference, presents it to the
-LLM as a function/tool definition, and lets the model autonomously invoke the
-tool.  The raw workflow SSE result is passed through the configured lifecycle
-hooks before being written into the final protocol output frames.
+result, collects **all** execution-relevant references from the skill, and
+presents them to the LLM alongside a generic tool definition.  The model
+autonomously assembles call parameters based on the reference descriptions.
+
+No reference id is hard-coded.  The skill author controls what the executor
+sees by declaring references in the SKILL.md frontmatter; the executor simply
+loads all references that belong to the matched skill, excluding those already
+consumed by the planner (``slot_filling``, ``slot_rules``).
 
 Design constraints
 ------------------
@@ -15,6 +19,8 @@ Design constraints
   the *last* output is retained across iterations.
 * **Single LLM call** – the executor makes exactly one ``chat`` call with
   ``tool_choice`` forced so that the model must invoke the tool.
+* **Reference-driven** – any skill reference can drive the tool definition;
+  the executor itself is business-agnostic.
 """
 
 from __future__ import annotations
@@ -31,13 +37,12 @@ from intent_router_harness.contracts import (
     TaskRuntimeState,
 )
 from intent_router_harness.llm import LLMClient, LLMRequestError
-from intent_router_harness.skills import SkillDocument, SkillLibrary
+from intent_router_harness.skills import SkillDocument, SkillLibrary, SkillReference
 from intent_router_harness.workflow import (
     WorkflowHTTPRequest,
     WorkflowToolClient,
     WorkflowToolError,
     WorkflowToolSpec,
-    parse_workflow_sse,
     render_workflow_response_mapping,
     workflow_event_output,
 )
@@ -134,16 +139,18 @@ class LLMWorkflowExecutor:
         if skill is None:
             return ExecutorResult(frames=(), task_state=task_state)
 
-        wf_ref_body = _workflow_reference_body(skill)
-        if wf_ref_body is None:
+        exec_refs = _collect_executor_references(skill)
+        if not exec_refs:
             return ExecutorResult(frames=(), task_state=task_state)
+
+        ref_body = _merge_reference_bodies(exec_refs)
 
         # -- LLM function call to assemble the payload ----------------------
         try:
             workflow_request = self._call_llm_for_tool(
                 request=request,
                 current_task=current_task,
-                wf_ref_body=wf_ref_body,
+                ref_body=ref_body,
             )
         except (ExecutorError, LLMRequestError) as exc:
             logger.exception(
@@ -337,9 +344,9 @@ class LLMWorkflowExecutor:
         *,
         request: RouterMessageRequest,
         current_task: PlannedTask,
-        wf_ref_body: str,
+        ref_body: str,
     ) -> WorkflowHTTPRequest:
-        tool_def = _build_tool_definition(wf_ref_body)
+        tool_def = _build_tool_definition(ref_body)
         config_vars = {
             cv.get("name", cv.get("key", "")): cv.get("value", "")
             for cv in (
@@ -351,21 +358,18 @@ class LLMWorkflowExecutor:
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": "\n\n".join([
-                    "你是 workflow 执行器。根据提槽结果和系统变量，调用工具执行业务。",
-                    "严格按照工具定义和 Workflow Reference 描述组装参数。",
-                    "不要添加未定义的字段，不要修改 URL。",
-                    f"## Workflow Reference\n{wf_ref_body}",
-                ]),
+                "content": (
+                    "你是 workflow 执行器。根据提槽结果和系统变量，调用工具执行业务。"
+                    "严格按照工具定义描述组装参数，不要添加未定义的字段。"
+                ),
             },
             {
                 "role": "user",
-                "content": "\n\n".join([
-                    f"当前任务: intent_code={current_task.intent_code}, taskId={current_task.taskId}",
-                    f"提槽结果 (slot_memory): {json.dumps(current_task.slot_memory, ensure_ascii=False)}",
-                    f"系统变量 (config_variables): {json.dumps(config_vars, ensure_ascii=False)}",
+                "content": "\n".join([
+                    f"slot_memory: {json.dumps(current_task.slot_memory, ensure_ascii=False)}",
+                    f"config_variables: {json.dumps(config_vars, ensure_ascii=False)}",
                     f"用户输入: {request.txt}",
-                    "请调用工具执行此任务。",
+                    "请调用工具。",
                 ]),
             },
         ]
@@ -454,45 +458,62 @@ class LLMWorkflowExecutor:
 # Pure functions (stateless helpers)
 # ---------------------------------------------------------------------------
 
-def _workflow_reference_body(skill: SkillDocument) -> str | None:
-    """Return the body of the ``workflow_request`` reference if present."""
-    for ref in skill.references:
-        if ref.id == "workflow_request":
-            return ref.body
-    return None
+# Reference ids consumed by the planner; excluded from executor context.
+_PLANNER_REFERENCE_IDS = frozenset({"slot_filling", "slot_rules"})
 
 
-def _build_tool_definition(wf_ref_body: str) -> dict[str, Any]:
-    """Build an OpenAI function-tool definition from reference prose.
+def _collect_executor_references(skill: SkillDocument) -> tuple[SkillReference, ...]:
+    """Return all skill references that are relevant to the executor.
 
-    The reference text is embedded as the function description so the LLM
-    can read the full contract.  The parameter schema is kept generic
-    (method + url + body) to stay skill-agnostic; the LLM fills concrete
-    values based on the reference instructions.
+    Planner-specific references (``slot_filling``, ``slot_rules``) are
+    excluded.  Everything else is considered execution context – the skill
+    author decides what references the executor sees.
+    """
+    return tuple(
+        ref for ref in skill.references
+        if ref.id not in _PLANNER_REFERENCE_IDS
+    )
+
+
+def _merge_reference_bodies(refs: tuple[SkillReference, ...]) -> str:
+    """Concatenate reference bodies into a single text block."""
+    parts: list[str] = []
+    for ref in refs:
+        header = f"## {ref.purpose}" if ref.purpose else f"## {ref.id}"
+        parts.append(f"{header}\n{ref.body}")
+    return "\n\n".join(parts)
+
+
+def _build_tool_definition(ref_body: str) -> dict[str, Any]:
+    """Build an OpenAI function-tool definition from skill reference text.
+
+    The full reference text is embedded in the function description so the
+    LLM can read the contract.  The parameter schema is generic (method +
+    url + body) and skill-agnostic; the LLM fills concrete values based on
+    the reference instructions.
     """
     return {
         "type": "function",
         "function": {
             "name": TOOL_NAME,
             "description": (
-                "执行子工作流 HTTP 调用。根据 Workflow Reference 定义的契约组装参数。\n\n"
-                + wf_ref_body
+                "执行 HTTP 调用。根据以下 Reference 定义组装参数。\n\n"
+                + ref_body
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "method": {
                         "type": "string",
-                        "enum": ["POST"],
-                        "description": "HTTP 方法，固定为 POST",
+                        "description": "HTTP 方法",
                     },
                     "url": {
                         "type": "string",
-                        "description": "子工作流完整 HTTP(S) URL，必须严格按 Reference 输出",
+                        "description": "完整 HTTP(S) URL，按 Reference 输出",
                     },
                     "body": {
                         "type": "object",
-                        "description": "请求体 JSON 对象，字段按 Reference 定义填充",
+                        "description": "请求体 JSON 对象，按 Reference 定义填充",
                     },
                 },
                 "required": ["method", "url", "body"],
@@ -528,8 +549,8 @@ def _parse_tool_call_response(response: dict[str, Any]) -> WorkflowHTTPRequest:
     body = arguments.get("body")
     if not isinstance(body, dict):
         raise ExecutorError("tool_call body must be a JSON object")
-    if method != "POST":
-        raise ExecutorError(f"unsupported workflow method from LLM: {method}")
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        raise ExecutorError(f"unsupported HTTP method from LLM: {method}")
     if not url:
         raise ExecutorError("tool_call url is empty")
 

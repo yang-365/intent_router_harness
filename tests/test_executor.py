@@ -17,8 +17,9 @@ from intent_router_harness.executor import (
     ExecutorResult,
     LLMWorkflowExecutor,
     _build_tool_definition,
+    _collect_executor_references,
+    _merge_reference_bodies,
     _parse_tool_call_response,
-    _workflow_reference_body,
 )
 from intent_router_harness.skills import SkillDocument, SkillLibrary, SkillReference
 from intent_router_harness.workflow import (
@@ -103,7 +104,7 @@ class FakeWorkflowClient:
 # ---------------------------------------------------------------------------
 
 
-def _skill_with_wf_ref() -> SkillDocument:
+def _skill_with_refs() -> SkillDocument:
     return SkillDocument(
         name="transfer-routing",
         description="转账路由",
@@ -113,16 +114,23 @@ def _skill_with_wf_ref() -> SkillDocument:
         required_slots=("payee_name", "amount"),
         references=(
             SkillReference(
+                id="slot_filling",
+                path=Path("fake/slot_filling.md"),
+                body="slot filling rules",
+                purpose="提槽规则",
+            ),
+            SkillReference(
                 id="workflow_request",
                 path=Path("fake/workflow_request.md"),
                 body="method: POST\nurl: http://localhost:9876/api\n",
+                purpose="转账子工作流接口",
             ),
         ),
     )
 
 
 def _skill_library() -> SkillLibrary:
-    skill = _skill_with_wf_ref()
+    skill = _skill_with_refs()
     return SkillLibrary({skill.name: skill})
 
 
@@ -171,16 +179,43 @@ def _tool_call_args() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_workflow_reference_body_returns_body() -> None:
-    skill = _skill_with_wf_ref()
-    assert _workflow_reference_body(skill) is not None
+def test_collect_executor_references_excludes_planner_refs() -> None:
+    skill = _skill_with_refs()
+    refs = _collect_executor_references(skill)
+    ref_ids = [r.id for r in refs]
+    assert "slot_filling" not in ref_ids
+    assert "workflow_request" in ref_ids
 
 
-def test_workflow_reference_body_returns_none_when_missing() -> None:
+def test_collect_executor_references_returns_empty_when_only_planner_refs() -> None:
+    skill = SkillDocument(
+        name="planner-only", description="", path=Path("x"), body="",
+        intent_codes=("X",),
+        references=(
+            SkillReference(id="slot_filling", path=Path("x"), body="rules"),
+            SkillReference(id="slot_rules", path=Path("x"), body="more rules"),
+        ),
+    )
+    assert _collect_executor_references(skill) == ()
+
+
+def test_collect_executor_references_returns_empty_when_no_refs() -> None:
     skill = SkillDocument(
         name="no-ref", description="", path=Path("x"), body="", intent_codes=("X",),
     )
-    assert _workflow_reference_body(skill) is None
+    assert _collect_executor_references(skill) == ()
+
+
+def test_merge_reference_bodies_uses_purpose_as_header() -> None:
+    refs = (
+        SkillReference(id="api_spec", path=Path("x"), body="POST /foo", purpose="接口定义"),
+        SkillReference(id="auth", path=Path("x"), body="Bearer token"),
+    )
+    merged = _merge_reference_bodies(refs)
+    assert "## 接口定义" in merged
+    assert "## auth" in merged
+    assert "POST /foo" in merged
+    assert "Bearer token" in merged
 
 
 def test_build_tool_definition_includes_reference_in_description() -> None:
@@ -217,9 +252,18 @@ def test_parse_tool_call_response_rejects_missing_tool_calls() -> None:
         _parse_tool_call_response({"choices": [{"message": {"content": "no tool"}}]})
 
 
-def test_parse_tool_call_response_rejects_non_post() -> None:
+def test_parse_tool_call_response_accepts_standard_methods() -> None:
+    for method in ("POST", "GET", "PUT", "PATCH", "DELETE"):
+        resp = {"choices": [{"message": {"tool_calls": [
+            {"function": {"name": "x", "arguments": json.dumps({"method": method, "url": "http://x", "body": {}})}}
+        ]}}]}
+        result = _parse_tool_call_response(resp)
+        assert result.method == method
+
+
+def test_parse_tool_call_response_rejects_invalid_method() -> None:
     bad = {"choices": [{"message": {"tool_calls": [
-        {"function": {"name": "x", "arguments": json.dumps({"method": "GET", "url": "u", "body": {}})}}
+        {"function": {"name": "x", "arguments": json.dumps({"method": "FOOBAR", "url": "u", "body": {}})}}
     ]}}]}
     with pytest.raises(ExecutorError, match="unsupported"):
         _parse_tool_call_response(bad)
