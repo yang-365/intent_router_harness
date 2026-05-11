@@ -218,9 +218,15 @@ def build_harness_middleware(
 
         def _gate(self, state: dict[str, Any]) -> dict[str, Any] | None:
             messages = state.get("messages", [])
-            if not any(self._is_workflow_result(msg, ToolMessage) for msg in messages):
+            workflow_msg = None
+            for msg in reversed(messages):
+                if self._is_workflow_result(msg, ToolMessage):
+                    workflow_msg = msg
+                    break
+            if workflow_msg is None:
                 return None
             logger.info("CompletionGate: workflow result detected, terminating loop")
+            output = self._extract_workflow_output(workflow_msg)
             emit_trace(
                 "completion_gate_triggered",
                 "任务完成门控触发",
@@ -238,7 +244,7 @@ def build_harness_middleware(
                                         "status": "waiting_assistant_completion",
                                         "completion_state": 1,
                                         "completion_reason": "workflow_result_available",
-                                        "output": {},
+                                        "output": output,
                                     }
                                 ]
                             },
@@ -247,6 +253,27 @@ def build_harness_middleware(
                     )
                 ],
             }
+
+        @staticmethod
+        def _extract_workflow_output(msg: Any) -> Any:
+            """Extract usable output from a workflow ToolMessage.
+
+            Tries to parse the ToolMessage content as JSON and return
+            the most meaningful result: node_output > output > raw parsed > raw string.
+            """
+            content = getattr(msg, "content", "")
+            if not content:
+                return {}
+            try:
+                parsed = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": content}
+            if isinstance(parsed, dict):
+                if "node_output" in parsed:
+                    return parsed["node_output"]
+                if "output" in parsed:
+                    return parsed["output"]
+            return parsed
 
         @staticmethod
         def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:

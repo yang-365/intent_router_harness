@@ -149,7 +149,10 @@ def _raw_output(text: str) -> dict[str, Any]:
 
 
 def _parse_sse_event(text: str) -> dict[str, Any] | None:
-    """Parse a single SSE event block into a dict."""
+    """Parse a single SSE event block into a dict.
+
+    Returns ``None`` for non-data events and SSE ``[DONE]`` sentinels.
+    """
     data_lines: list[str] = []
     for line in text.strip().splitlines():
         if line.startswith("data: "):
@@ -159,6 +162,8 @@ def _parse_sse_event(text: str) -> dict[str, Any] | None:
     if not data_lines:
         return None
     raw = "\n".join(data_lines)
+    if raw.strip() == "[DONE]":
+        return None
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
