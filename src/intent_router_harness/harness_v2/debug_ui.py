@@ -814,13 +814,13 @@ _VALIDATOR_HTML = """<!doctype html>
     }
 
     function buildCompletionPayload() {
-      if (!state.currentTask || !state.currentTask.taskId) {
-        return null;
-      }
+      const taskId = (state.currentTask && state.currentTask.taskId)
+        || (state.lastFrame && state.lastFrame.intent_code)
+        || "current_task";
       return {
         sessionId: els.sessionId.value.trim(),
         custID: els.custID.value.trim() || "C0001",
-        taskId: state.currentTask.taskId,
+        taskId: taskId,
         completionSignal: 1,
         stream: true,
         debugTrace: els.debugTrace.checked,
@@ -1064,7 +1064,11 @@ _VALIDATOR_HTML = """<!doctype html>
       }
       renderContextLifecycle();
       els.lastFrameView.textContent = JSON.stringify(state.lastFrame || {}, null, 2);
-      const canComplete = task && !state.busy && ["ready_for_dispatch", "waiting_assistant_completion"].includes(task.status);
+      const waitingStatuses = ["ready_for_dispatch", "waiting_assistant_completion"];
+      const canComplete = !state.busy && (
+        (task && waitingStatuses.includes(task.status)) ||
+        (state.lastFrame && waitingStatuses.includes(state.lastFrame.status))
+      );
       els.completeBtn.disabled = !canComplete;
     }
 
