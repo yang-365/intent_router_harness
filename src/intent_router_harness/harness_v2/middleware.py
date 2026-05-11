@@ -90,10 +90,11 @@ def build_harness_middleware(
                 return request
             constraint_block = (
                 "\n\n## Task Execution Constraints\n"
-                "- 任务必须串行执行：一次只推进一个 current_task\n"
+                "- 使用 write_todos 工具管理任务列表，将每个识别到的任务作为一个 todo 项\n"
+                "- 任务必须串行执行：一次只将一个 todo 标记为 in_progress\n"
                 "- 当前任务缺少必填参数时，必须向用户追问，不能跳过\n"
                 "- 不要自行将任务标记为 completed — 任务完成由前端 /completion 接口触发\n"
-                "- 多任务场景中，task_list 按用户表达顺序排列，按顺序推进\n"
+                "- 多任务场景中，按用户表达顺序在 write_todos 中排列，按顺序推进\n"
                 "- 当前任务未完成前，不要开始下一个任务\n"
                 "- workflow_api_call 完成后，将状态设为 waiting_assistant_completion，等待前端确认\n"
             )
@@ -747,10 +748,6 @@ def build_harness_middleware(
     class ProtocolOutputMiddleware(AgentMiddleware):
         """Validate and normalize agent output to AssistantProtocolFrame format."""
 
-        def __init__(self) -> None:
-            self._prev_tasks: dict[str, dict[str, Any]] = {}
-            self._prev_current_task_id: str | None = None
-
         @property
         def name(self) -> str:
             return "ProtocolOutputMiddleware"
@@ -784,11 +781,9 @@ def build_harness_middleware(
                 for frame in frames:
                     _fill_frame_defaults(frame)
                     self._emit_frame_trace(frame)
-                    self._emit_task_crud_traces(frame)
             elif "status" in payload:
                 _fill_frame_defaults(payload)
                 self._emit_frame_trace(payload)
-                self._emit_task_crud_traces(payload)
             return None
 
         @staticmethod
@@ -810,15 +805,6 @@ def build_harness_middleware(
                     f"提取参数: {', '.join(f'{k}={v}' for k, v in slot_memory.items())}",
                     slot_memory=slot_memory,
                 )
-            task_list = frame.get("task_list")
-            if task_list and isinstance(task_list, list) and len(task_list) > 0:
-                emit_trace(
-                    "task_planned",
-                    "任务规划",
-                    f"规划了 {len(task_list)} 个任务",
-                    task_list=task_list,
-                    current_task=frame.get("current_task"),
-                )
             status = frame.get("status")
             completion_state = frame.get("completion_state", 0)
             if status:
@@ -830,90 +816,6 @@ def build_harness_middleware(
                     completion_state=completion_state,
                     message=frame.get("message", ""),
                 )
-
-        def _emit_task_crud_traces(self, frame: dict[str, Any]) -> None:
-            """Diff task_list and current_task against previous state, emit CRUD events."""
-            task_list = frame.get("task_list")
-            if not isinstance(task_list, list):
-                task_list = []
-            current_task = frame.get("current_task")
-
-            new_tasks: dict[str, dict[str, Any]] = {}
-            for task in task_list:
-                tid = task.get("taskId") or task.get("id") or ""
-                if tid:
-                    new_tasks[tid] = task
-
-            prev = self._prev_tasks
-            prev_ids = set(prev.keys())
-            new_ids = set(new_tasks.keys())
-
-            # Added tasks
-            for tid in new_ids - prev_ids:
-                task = new_tasks[tid]
-                emit_trace(
-                    "task_added",
-                    "任务新增",
-                    f"新增任务: {tid} — {task.get('title') or task.get('intent_code') or ''}",
-                    taskId=tid,
-                    task=task,
-                )
-
-            # Removed tasks
-            for tid in prev_ids - new_ids:
-                task = prev[tid]
-                emit_trace(
-                    "task_removed",
-                    "任务移除",
-                    f"移除任务: {tid}",
-                    taskId=tid,
-                    task=task,
-                )
-
-            # Updated tasks (status or slot_memory changed)
-            for tid in prev_ids & new_ids:
-                old_task = prev[tid]
-                new_task = new_tasks[tid]
-                old_status = old_task.get("status", "")
-                new_status = new_task.get("status", "")
-                if old_status != new_status:
-                    emit_trace(
-                        "task_status_changed",
-                        "任务状态变更",
-                        f"任务 {tid}: {old_status} → {new_status}",
-                        taskId=tid,
-                        old_status=old_status,
-                        new_status=new_status,
-                        task=new_task,
-                    )
-                old_slots = old_task.get("slot_memory", {})
-                new_slots = new_task.get("slot_memory", {})
-                if old_slots != new_slots:
-                    emit_trace(
-                        "task_slots_updated",
-                        "任务参数更新",
-                        f"任务 {tid} 参数变更",
-                        taskId=tid,
-                        old_slots=old_slots,
-                        new_slots=new_slots,
-                    )
-
-            # Current task switch
-            new_current_id = (current_task.get("taskId") or current_task.get("id") or "") if isinstance(current_task, dict) else ""
-            if new_current_id and new_current_id != self._prev_current_task_id:
-                emit_trace(
-                    "current_task_switched",
-                    "当前任务切换",
-                    f"切换当前任务: {self._prev_current_task_id or '(无)'} → {new_current_id}",
-                    old_taskId=self._prev_current_task_id or "",
-                    new_taskId=new_current_id,
-                    current_task=current_task,
-                )
-
-            # Update state for next diff
-            self._prev_tasks = new_tasks
-            if new_current_id:
-                self._prev_current_task_id = new_current_id
 
     # ------------------------------------------------------------------
     # Assembly
