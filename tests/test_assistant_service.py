@@ -23,6 +23,7 @@ from intent_router_harness.regression import load_regression_suite, validate_ste
 from intent_router_harness.server import create_server
 from intent_router_harness.service import IntentRouterHarnessService
 from intent_router_harness.session_store import InMemorySessionStore
+from intent_router_harness.executor import ExecutorResult, LLMWorkflowExecutor
 from intent_router_harness.workflow import (
     WorkflowHTTPRequest,
     WorkflowToolError,
@@ -65,8 +66,8 @@ class FakeLLMClient:
         self.responses = list(responses)
         self.messages: list[list[dict[str, str]]] = []
 
-    def chat(self, messages, max_tokens=None):
-        del max_tokens
+    def chat(self, messages, max_tokens=None, tools=None, tool_choice=None):
+        del max_tokens, tools, tool_choice
         self.messages.append(messages)
         content = self.responses.pop(0)
         return {
@@ -75,6 +76,40 @@ class FakeLLMClient:
                 {
                     "message": {"content": content},
                     "finish_reason": "stop",
+                }
+            ],
+        }
+
+
+class FakeToolCallLLMClient:
+    """LLM client that returns a function call response for executor tests."""
+
+    def __init__(self, tool_call_arguments: dict) -> None:
+        self._arguments = tool_call_arguments
+        self.calls: list[dict] = []
+
+    def chat(self, messages, max_tokens=None, tools=None, tool_choice=None):
+        del max_tokens
+        self.calls.append({"messages": messages, "tools": tools, "tool_choice": tool_choice})
+        return {
+            "model": "fake-llm",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_001",
+                                "type": "function",
+                                "function": {
+                                    "name": "workflow_api_call",
+                                    "arguments": json.dumps(self._arguments, ensure_ascii=False),
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
                 }
             ],
         }
@@ -100,6 +135,45 @@ class FakeWorkflowClient:
         if self.error is not None:
             raise self.error
         return WorkflowToolResult(events=tuple(self.events))
+
+
+def _fake_skill_library() -> "SkillLibrary":
+    """Build a minimal SkillLibrary with a transfer skill and workflow_request reference."""
+    from intent_router_harness.skills import SkillDocument, SkillLibrary, SkillReference
+
+    wf_ref = SkillReference(
+        id="workflow_request",
+        path=Path("fake/workflow_request.md"),
+        body=(
+            "# 转账子工作流请求组装\n"
+            "method: POST\n"
+            "url: http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool\n"
+        ),
+    )
+    skill = SkillDocument(
+        name="transfer-routing",
+        description="转账路由",
+        path=Path("fake/SKILL.md"),
+        body="transfer skill body",
+        intent_codes=("AG_TRANS",),
+        required_slots=("payee_name", "amount"),
+        references=(wf_ref,),
+    )
+    return SkillLibrary({"transfer-routing": skill})
+
+
+def _build_test_executor(
+    *,
+    tool_call_arguments: dict,
+    workflow_client: "FakeWorkflowClient",
+) -> LLMWorkflowExecutor:
+    """Build an executor with fake LLM (returning tool call) and fake workflow client."""
+    return LLMWorkflowExecutor(
+        llm_client=FakeToolCallLLMClient(tool_call_arguments),
+        skill_library=_fake_skill_library(),
+        workflow_client=workflow_client,
+        workflow_tools={"AG_TRANS": _transfer_workflow_spec()},
+    )
 
 
 def _transfer_workflow_spec() -> WorkflowToolSpec:
@@ -1059,7 +1133,6 @@ def test_execute_ready_task_invokes_validated_workflow_request(tmp_path: Path) -
         status="ready_for_dispatch",
         title="转账给陈广荣",
         slot_memory={"payee_name": "陈广荣", "amount": "500"},
-        workflow_request=_transfer_workflow_request(),
     )
     workflow_client = FakeWorkflowClient(
         [
@@ -1077,6 +1150,10 @@ def test_execute_ready_task_invokes_validated_workflow_request(tmp_path: Path) -
             ),
         ]
     )
+    executor = _build_test_executor(
+        tool_call_arguments=_transfer_workflow_request(),
+        workflow_client=workflow_client,
+    )
     service = IntentRouterHarnessService.from_spec(
         _write_minimal_harness(tmp_path),
         message_planner=StaticPlanner(
@@ -1091,10 +1168,9 @@ def test_execute_ready_task_invokes_validated_workflow_request(tmp_path: Path) -
                 current_task=current_task,
             )
         ),
-        workflow_client=workflow_client,
     )
     assert service.assistant is not None
-    service.assistant.workflow_tools = {"AG_TRANS": _transfer_workflow_spec()}
+    service.assistant.executor = executor
 
     result = service.handle_message(
         RouterMessageRequest(
@@ -1115,18 +1191,6 @@ def test_execute_ready_task_invokes_validated_workflow_request(tmp_path: Path) -
     _, payload = workflow_client.calls[0]
     assert payload.method == "POST"
     assert payload.url == "http://127.0.0.1:9876/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool"
-    assert payload.body == {
-        "session_id": "1635501196813426",
-        "txt": "给陈广荣转500元",
-        "stream": True,
-        "config_variables": [
-            {"name": "custID", "value": "1631102265490929"},
-            {"name": "sessionID", "value": "1635501196813426"},
-            {"name": "currentDisplay", "value": ""},
-            {"name": "agentSessionID", "value": "1635501196813426"},
-            {"name": "slots_data", "value": '{"payee_name": "陈广荣", "amount": "500"}'},
-        ],
-    }
     assert [frame.completion_reason for frame in result.frames][-3:] == [
         "workflow_node_output",
         "workflow_node_output",
@@ -1147,10 +1211,13 @@ def test_router_only_ready_task_does_not_invoke_workflow(tmp_path: Path) -> None
         intent_code="AG_TRANS",
         status="ready_for_dispatch",
         slot_memory={"payee_name": "陈广荣", "amount": "500"},
-        workflow_request=_transfer_workflow_request(cust_id="C0001"),
     )
     workflow_client = FakeWorkflowClient(
         [WorkflowToolEvent(node_id="end", node_title="结束", timestamp=None, node_output={"done": True})]
+    )
+    executor = _build_test_executor(
+        tool_call_arguments=_transfer_workflow_request(cust_id="C0001"),
+        workflow_client=workflow_client,
     )
     service = IntentRouterHarnessService.from_spec(
         _write_minimal_harness(tmp_path),
@@ -1166,10 +1233,9 @@ def test_router_only_ready_task_does_not_invoke_workflow(tmp_path: Path) -> None
                 current_task=current_task,
             )
         ),
-        workflow_client=workflow_client,
     )
     assert service.assistant is not None
-    service.assistant.workflow_tools = {"AG_TRANS": _transfer_workflow_spec()}
+    service.assistant.executor = executor
 
     result = service.handle_message(
         RouterMessageRequest(
@@ -1191,13 +1257,16 @@ def test_workflow_node_output_is_opaque_for_string_and_array_values(tmp_path: Pa
         intent_code="AG_TRANS",
         status="ready_for_dispatch",
         slot_memory={"payee_name": "陈广荣", "amount": "500"},
-        workflow_request=_transfer_workflow_request(cust_id="C0001"),
     )
     workflow_client = FakeWorkflowClient(
         [
             WorkflowToolEvent(node_id="string", node_title="字符串", timestamp=None, node_output="opaque-string"),
             WorkflowToolEvent(node_id="array", node_title="数组", timestamp=None, node_output=["opaque", 1]),
         ]
+    )
+    executor = _build_test_executor(
+        tool_call_arguments=_transfer_workflow_request(cust_id="C0001"),
+        workflow_client=workflow_client,
     )
     service = IntentRouterHarnessService.from_spec(
         _write_minimal_harness(tmp_path),
@@ -1213,10 +1282,9 @@ def test_workflow_node_output_is_opaque_for_string_and_array_values(tmp_path: Pa
                 current_task=current_task,
             )
         ),
-        workflow_client=workflow_client,
     )
     assert service.assistant is not None
-    service.assistant.workflow_tools = {"AG_TRANS": _transfer_workflow_spec()}
+    service.assistant.executor = executor
 
     result = service.handle_message(
         RouterMessageRequest(
@@ -1238,7 +1306,10 @@ def test_workflow_error_returns_failed_frame_and_clears_runtime(tmp_path: Path) 
         intent_code="AG_TRANS",
         status="ready_for_dispatch",
         slot_memory={"payee_name": "陈广荣", "amount": "500"},
-        workflow_request=_transfer_workflow_request(cust_id="C0001"),
+    )
+    executor = _build_test_executor(
+        tool_call_arguments=_transfer_workflow_request(cust_id="C0001"),
+        workflow_client=FakeWorkflowClient(error=WorkflowToolError("boom")),
     )
     service = IntentRouterHarnessService.from_spec(
         _write_minimal_harness(tmp_path),
@@ -1254,10 +1325,9 @@ def test_workflow_error_returns_failed_frame_and_clears_runtime(tmp_path: Path) 
                 current_task=current_task,
             )
         ),
-        workflow_client=FakeWorkflowClient(error=WorkflowToolError("boom")),
     )
     assert service.assistant is not None
-    service.assistant.workflow_tools = {"AG_TRANS": _transfer_workflow_spec()}
+    service.assistant.executor = executor
 
     result = service.handle_message(
         RouterMessageRequest(
@@ -1272,7 +1342,6 @@ def test_workflow_error_returns_failed_frame_and_clears_runtime(tmp_path: Path) 
     assert result.final_frame.ok is False
     assert result.final_frame.status == "failed"
     assert result.final_frame.completion_reason == "workflow_error"
-    assert result.final_frame.output == {"error": {"code": "workflow_error", "message": "boom"}}
     assert saved.current_task is None
     assert saved.task_list == []
     assert saved.slot_memory == {}

@@ -27,6 +27,7 @@ from intent_router_harness.regression import (
     validate_step_transcript,
 )
 from intent_router_harness.runtime import PromptHarness, load_prompt_harness
+from intent_router_harness.executor import LLMWorkflowExecutor
 from intent_router_harness.tool_runtime import load_command_tools
 from intent_router_harness.workflow import WorkflowToolClient, load_workflow_tool_specs
 from intent_router_harness.workflow_hooks import load_workflow_hooks
@@ -111,12 +112,19 @@ class IntentRouterHarnessService:
         planner = message_planner
         if planner is None and llm_client is not None:
             planner = LLMMessagePlanner(harness=harness, llm_client=llm_client)
-        self.assistant = (
-            AssistantProtocolService(
-                planner=planner,
+        executor = None
+        if llm_client is not None and workflow_client is not None:
+            executor = LLMWorkflowExecutor(
+                llm_client=llm_client,
+                skill_library=harness.skills,
                 workflow_client=workflow_client,
                 workflow_tools=workflow_tools,
                 workflow_hooks=workflow_hooks,
+            )
+        self.assistant = (
+            AssistantProtocolService(
+                planner=planner,
+                executor=executor,
             )
             if planner is not None
             else None

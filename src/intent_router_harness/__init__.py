@@ -23,6 +23,12 @@ from intent_router_harness.contracts import (
     TaskCompletionRequest,
     TaskRuntimeState,
 )
+from intent_router_harness.executor import (
+    ExecutorError,
+    ExecutorResult,
+    LLMWorkflowExecutor,
+    WorkflowExecutor,
+)
 from intent_router_harness.service import (
     HarnessHealth,
     IntentRouterHarnessService,
@@ -62,8 +68,12 @@ __all__ = [
     "ExperimentSpec",
     "HarnessHealth",
     "HarnessSpec",
+    "ExecutorError",
+    "ExecutorResult",
     "HTTPWorkflowToolClient",
     "IntentRouterHarnessService",
+    "LLMWorkflowExecutor",
+    "WorkflowExecutor",
     "AssistantProtocolFrame",
     "AssistantServiceResult",
     "AssistantTraceEvent",

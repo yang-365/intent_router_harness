@@ -449,10 +449,10 @@ class LLMMessagePlanner:
             )
         system_parts = [
             "你负责对当前任务做补槽。只处理 current_task，不要修改、提槽或推进其他任务。",
-            "只返回 JSON，字段允许：slot_memory、workflow_request、message、requested_references、diagnostics。",
+            "只返回 JSON，字段允许：slot_memory、message、requested_references、diagnostics。",
             "输出必须是原始 JSON 对象文本，第一个字符必须是 {，最后一个字符必须是 }。",
             "禁止使用 Markdown、代码块、```json、解释性文字或任何 JSON 外层包装。",
-            "如果已加载 workflow_request reference，且当前任务槽位齐全，需要按 reference 生成 workflow_request。",
+            "槽位齐全时输出 slot_memory 并让任务状态为 ready_for_dispatch，无需输出 workflow_request。",
             "slot_memory 只能包含当前 skill 定义的当前任务槽位；不要输出 task_list，不要输出其他任务的槽位。",
             "数值类槽位按当前 skill 要求保存。只合并最新消息或 current_task.source_text 中有依据的新槽位。",
             "如果确实需要已暴露 reference 才能完成判断，返回 requested_references。",
@@ -626,9 +626,7 @@ class LLMMessagePlanner:
             else "router_waiting_user_input"
         )
         message = "" if status == "ready_for_dispatch" else _missing_slots_message(skill, missing_slots)
-        workflow_request = slot_payload.get("workflow_request")
-        if not isinstance(workflow_request, dict) or status != "ready_for_dispatch":
-            workflow_request = {}
+        workflow_request: dict[str, Any] = {}
         updated_current = current_task.model_copy(
             update={"slot_memory": current_slots, "status": status, "workflow_request": workflow_request},
             deep=True,
@@ -824,11 +822,7 @@ def _planner_output_schema_json() -> str:
             "requested_references": "最终规划前需要加载的可选 reference id 列表，必须来自允许列表",
             "message": "面向用户的消息",
             "output": "协议输出对象；不要在 output 内包含 slot_memory",
-            "workflow_request": {
-                "method": "子工作流 HTTP 方法，例如 POST；只在槽位齐全且已加载 workflow_request reference 时输出",
-                "url": "子工作流完整 HTTP(S) URL，必须严格按 workflow_request reference 输出",
-                "body": "子工作流 JSON 请求体对象",
-            },
+            "workflow_request": "(由 executor 层通过 function call 独立组装，planner 无需输出)",
             "diagnostics": "调试对象",
         },
     }
@@ -1076,7 +1070,7 @@ def _default_slot_reference_ids(skill: SkillDocument) -> tuple[str, ...]:
     return tuple(
         reference.id
         for reference in skill.references
-        if reference.id in {"slot_filling", "slot_rules", "workflow_request"}
+        if reference.id in {"slot_filling", "slot_rules"}
         and not is_workflow_tool_reference_body(reference.body)
     )
 

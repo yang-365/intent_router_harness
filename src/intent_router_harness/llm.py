@@ -37,6 +37,8 @@ class LLMClient(Protocol):
         messages: list[dict[str, str]],
         *,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
     ) -> dict[str, Any]:
         """Return an OpenAI-compatible chat completion response."""
 
@@ -100,6 +102,8 @@ class OpenAICompatibleLLMClient:
         messages: list[dict[str, str]],
         *,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: dict[str, Any] | str | None = None,
     ) -> dict[str, Any]:
         """Call `/chat/completions` and return decoded JSON."""
         payload: dict[str, Any] = {
@@ -110,6 +114,10 @@ class OpenAICompatibleLLMClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         if self.settings.enable_thinking is not None:
             payload["enable_thinking"] = self.settings.enable_thinking
         if self.settings.thinking_budget is not None:
