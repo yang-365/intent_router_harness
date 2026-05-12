@@ -100,6 +100,7 @@ def build_harness_middleware(
                 "- 多任务场景中，按用户表达顺序在 write_todos 中排列，按顺序推进\n"
                 "- 当前任务未完成前，不要开始下一个任务\n"
                 "- workflow_api_call 完成后，将状态设为 waiting_assistant_completion，等待前端确认\n"
+                "- write_todos 和 workflow_api_call 不能在同一轮并行调用，必须分步执行\n"
             )
             emit_trace_once(
                 "task_constraints_injected",
@@ -283,7 +284,9 @@ def build_harness_middleware(
         def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:
             if not isinstance(msg, tool_message_cls):
                 return False
-            return getattr(msg, "name", "") == "workflow_api_call"
+            if getattr(msg, "name", "") != "workflow_api_call":
+                return False
+            return getattr(msg, "status", "success") == "success"
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
