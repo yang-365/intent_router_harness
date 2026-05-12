@@ -308,16 +308,16 @@ def build_harness_middleware(
         Loading and unloading are driven exclusively by ``AgentState.todos``:
 
           1. ``before_model``: check todos for in_progress item.  If found
-             and no skill loaded, parse ``[INTENT_CODE]`` prefix from the
-             todo's content and resolve via ``SkillRegistry.find_by_intent``.
+             and no skill loaded, parse skill name prefix from the todo's
+             content and resolve via ``SkillRegistry``.
           2. ``wrap_model_call``: if ``_loaded_skill`` is set, inject
              skill body + references; otherwise inject metadata only.
           3. ``unload_skill()``: called by ``/completion`` endpoint
              when a task is marked done — clears ``_loaded_skill``.
 
         No message scanning is performed.  The only trigger for skill
-        loading is the ``[INTENT_CODE]`` prefix written by the LLM in
-        ``write_todos`` content.
+        loading is the skill name prefix written by the LLM in
+        ``write_todos`` content (e.g. ``transfer-routing 给张三转账``).
         """
 
         def __init__(self, registry: Any | None = None) -> None:
@@ -344,13 +344,29 @@ def build_harness_middleware(
             return None
 
         def _try_load_skill(self, todos: list[dict[str, Any]]) -> None:
-            """Detect and load skill from [INTENT_CODE] prefix in in_progress todo."""
+            """Detect and load skill from skill_name prefix in in_progress todo."""
             if not self._has_active_todo or self._loaded_skill or not self._registry:
                 return
             target = self._detect_skill_from_todos(todos)
             if target:
                 logger.info("SkillLifecycle: loading skill=%s (before_model)", target)
                 self._loaded_skill = target
+                meta = self._registry.get_meta(target)
+                emit_trace(
+                    "skill_loaded",
+                    "技能加载",
+                    f"加载技能: {target}",
+                    skill_name=target,
+                )
+                if meta and meta.references:
+                    loaded_refs = [f"{r.id}({r.purpose})" for r in meta.references]
+                    emit_trace(
+                        "skill_reference_loaded",
+                        "技能参考文件加载",
+                        f"加载 {len(loaded_refs)} 个参考文件: {', '.join(loaded_refs)}",
+                        skill_name=target,
+                        references=loaded_refs,
+                    )
 
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
             return handler(self._prepare_skill_context(request))
@@ -439,33 +455,17 @@ def build_harness_middleware(
                 return None
             meta = self._registry.get_meta(skill_name)
 
-            emit_trace(
-                "skill_loaded",
-                "技能加载",
-                f"加载技能: {skill_name}",
-                skill_name=skill_name,
-            )
-
             ref_sections = ""
             if meta and meta.references:
                 ref_parts: list[str] = []
-                loaded_refs: list[str] = []
                 for ref in meta.references:
                     ref_body = self._registry.load_reference(skill_name, ref.id)
                     if ref_body:
                         ref_parts.append(
                             f"\n### Reference: {ref.id} — {ref.purpose}\n\n{ref_body}"
                         )
-                        loaded_refs.append(f"{ref.id}({ref.purpose})")
                 if ref_parts:
                     ref_sections = "\n".join(ref_parts)
-                    emit_trace(
-                        "skill_reference_loaded",
-                        "技能参考文件加载",
-                        f"加载 {len(ref_parts)} 个参考文件: {', '.join(loaded_refs)}",
-                        skill_name=skill_name,
-                        references=loaded_refs,
-                    )
             return (
                 f"\n\n## Loaded Skill: {skill_name}\n\n"
                 f"{skill_body}"

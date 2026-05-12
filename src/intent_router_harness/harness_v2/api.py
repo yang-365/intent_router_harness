@@ -150,6 +150,7 @@ def create_app(
                         f"共 {len(task_list)} 个任务",
                         task_list=task_list,
                         current_task=current_task,
+                        raw_todos=todos,
                     )
                 emit_trace(
                     "assistant_protocol_frames",
