@@ -284,9 +284,7 @@ def build_harness_middleware(
         def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:
             if not isinstance(msg, tool_message_cls):
                 return False
-            if getattr(msg, "name", "") != "workflow_api_call":
-                return False
-            return getattr(msg, "status", "success") == "success"
+            return getattr(msg, "name", "") == "workflow_api_call"
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
