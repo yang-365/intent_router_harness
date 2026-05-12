@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_once
@@ -92,16 +91,17 @@ def build_harness_middleware(
             constraint_block = (
                 "\n\n## Task Execution Constraints\n"
                 "### write_todos 格式要求（必须严格遵守）\n"
-                "每个 todo 的 content **必须**以 intent_code 开头，空格后跟任务描述。\n"
-                "intent_code 必须从 Available Skills 列出的 intent_codes 中选择。\n\n"
+                "每个 todo 的 content **必须**以 skill name 开头，空格后跟任务描述。\n"
+                "skill name 必须从 Available Skills 列出的 name 中选择。\n\n"
                 "**正确格式：**\n"
                 "```\n"
-                '[{"content": "AG_TRANS 给张三转账3000元", "status": "in_progress"},\n'
-                ' {"content": "AG_PAY_BILL 缴电费200元", "status": "pending"}]\n'
+                '[{"content": "<skill-name> 任务描述", "status": "in_progress"},\n'
+                ' {"content": "<skill-name> 任务描述", "status": "pending"}]\n'
                 "```\n"
+                "其中 `<skill-name>` 替换为 Available Skills 中对应技能的 name 字段值。\n\n"
                 "**错误格式（不要这样写）：**\n"
                 "```\n"
-                '[{"content": "给张三转账3000元", "status": "in_progress"}]  ← 缺少intent_code前缀\n'
+                '[{"content": "任务描述", "status": "in_progress"}]  ← 缺少skill name前缀\n'
                 "```\n\n"
                 "### 任务规划规则\n"
                 "- 每个用户业务意图对应一个 todo 项，不拆内部执行步骤\n"
@@ -401,8 +401,8 @@ def build_harness_middleware(
             instruction = (
                 "\n\n## Skill Loading Protocol\n"
                 "不要手动调用 read_file 读取 SKILL.md 或 reference 文件 — "
-                "系统会在你识别意图后自动将对应技能的完整内容和参考文件注入到上下文中。\n"
-                "你只需根据上面的技能摘要识别用户意图并输出 intent_code，"
+                "系统会在你通过 write_todos 指定技能后自动将对应技能的完整内容和参考文件注入到上下文中。\n"
+                "你只需在 write_todos 的 content 中以 skill name 开头（如上面 Available Skills 中的 name 字段），"
                 "系统会自动加载对应技能的提槽规则和 workflow 地址。\n"
                 "不要编造 workflow URL，必须使用系统注入的 reference 中的完整地址。"
             )
@@ -472,26 +472,17 @@ def build_harness_middleware(
                 f"{ref_sections}"
             )
 
-        _INTENT_PREFIX_RE = re.compile(r"^([A-Z][A-Z0-9_]+)\s+")
-
         def _detect_skill_from_todos(self, todos: list[dict[str, Any]]) -> str | None:
-            """Parse intent_code prefix from the in_progress todo's content."""
+            """Parse skill_name prefix from the in_progress todo's content."""
             for todo in todos:
                 if todo.get("status") != "in_progress":
                     continue
                 content = todo.get("content", "")
-                match = self._INTENT_PREFIX_RE.match(content)
-                if match:
-                    intent_code = match.group(1)
-                    meta = self._registry.find_by_intent(intent_code)
-                    if meta:
-                        return meta.name
-                # Fallback: scan todo content for any known intent_code
-                for code in self._registry.intent_codes():
-                    if code in content:
-                        meta = self._registry.find_by_intent(code)
-                        if meta:
-                            return meta.name
+                # Extract first token (skill_name) before space
+                first_space = content.find(" ")
+                prefix = content[:first_space] if first_space > 0 else content
+                if prefix in self._registry.names():
+                    return prefix
             return None
 
     # ------------------------------------------------------------------

@@ -195,9 +195,9 @@ class TestSkillLifecycleMiddleware:
         mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # Simulate active todo with intent_code prefix — before_model detects and loads
+        # Simulate active todo with skill name prefix — before_model detects and loads
         lifecycle.before_model(
-            {"todos": [{"content": "AG_TRANS 给张三转账", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "transfer-routing 给张三转账", "status": "in_progress"}], "messages": []},
             None,
         )
         assert lifecycle._loaded_skill == "transfer-routing"
@@ -235,9 +235,9 @@ class TestSkillLifecycleMiddleware:
         mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # First: load transfer skill via intent_code prefix in todo
+        # First: load transfer skill via skill name prefix in todo
         lifecycle.before_model(
-            {"todos": [{"content": "AG_TRANS 给张三转账", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "transfer-routing 给张三转账", "status": "in_progress"}], "messages": []},
             None,
         )
         assert lifecycle._loaded_skill == "transfer-routing"
@@ -252,7 +252,7 @@ class TestSkillLifecycleMiddleware:
         lifecycle.unload_skill()
         assert lifecycle._loaded_skill is None
         lifecycle.before_model(
-            {"todos": [{"content": "AG_PAY_BILL 缴费", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "bill-payment 缴费", "status": "in_progress"}], "messages": []},
             None,
         )
         assert lifecycle._loaded_skill == "bill-payment"
