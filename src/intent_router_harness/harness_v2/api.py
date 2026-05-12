@@ -130,6 +130,17 @@ def create_app(
                 )
                 result = _invoke_agent(ha.agent, user_input, thread_id)
                 frames = _extract_frames(result)
+                todos = result.get("todos")
+                _inject_todos_into_frames(frames, todos)
+                if todos:
+                    task_list, current_task = _todos_to_task_list(todos)
+                    emit_trace(
+                        "task_planned",
+                        "任务规划 (write_todos)",
+                        f"共 {len(task_list)} 个任务",
+                        task_list=task_list,
+                        current_task=current_task,
+                    )
                 emit_trace(
                     "assistant_protocol_frames",
                     "SSE业务帧生成",
@@ -240,6 +251,37 @@ def _invoke_agent(agent: Any, user_input: str, thread_id: str) -> dict[str, Any]
         config={"configurable": {"thread_id": thread_id}},
     )
     return result
+
+
+def _todos_to_task_list(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Convert deepagent write_todos format to protocol task_list + current_task."""
+    task_list: list[dict[str, Any]] = []
+    current_task: dict[str, Any] | None = None
+    for i, todo in enumerate(todos):
+        task = {
+            "taskId": f"todo_{i}",
+            "title": todo.get("content", ""),
+            "status": todo.get("status", "pending"),
+        }
+        task_list.append(task)
+        if current_task is None and todo.get("status") == "in_progress":
+            current_task = task
+    return task_list, current_task
+
+
+def _inject_todos_into_frames(
+    frames: list[AssistantProtocolFrame],
+    todos: list[dict[str, Any]] | None,
+) -> None:
+    """Populate task_list and current_task on frames from AgentState.todos."""
+    if not todos:
+        return
+    task_list, current_task = _todos_to_task_list(todos)
+    for frame in frames:
+        if not frame.task_list:
+            frame.task_list = task_list
+        if frame.current_task is None and current_task is not None:
+            frame.current_task = current_task
 
 
 def _extract_frames(result: dict[str, Any]) -> list[AssistantProtocolFrame]:
