@@ -91,12 +91,20 @@ def build_harness_middleware(
                 return request
             constraint_block = (
                 "\n\n## Task Execution Constraints\n"
-                "- 使用 write_todos 工具规划任务：每个用户业务意图对应一个 todo 项\n"
-                "- todo 的 content 必须以 `[intent_code]` 开头，后跟任务描述。\n"
-                "  例如：`[AG_TRANS] 给张三转账3000元`、`[AG_PAY_BILL] 缴电费200元`\n"
-                "  intent_code 必须来自 Available Skills 中列出的 intent_codes\n"
-                "- todo 只记录业务意图级别的任务，"
-                "不要将意图识别、提槽、workflow 调用等内部执行步骤拆成 todo\n"
+                "### write_todos 格式要求（必须严格遵守）\n"
+                "每个 todo 的 content **必须**以 intent_code 开头，空格后跟任务描述。\n"
+                "intent_code 必须从 Available Skills 列出的 intent_codes 中选择。\n\n"
+                "**正确格式：**\n"
+                "```\n"
+                '[{"content": "AG_TRANS 给张三转账3000元", "status": "in_progress"},\n'
+                ' {"content": "AG_PAY_BILL 缴电费200元", "status": "pending"}]\n'
+                "```\n"
+                "**错误格式（不要这样写）：**\n"
+                "```\n"
+                '[{"content": "给张三转账3000元", "status": "in_progress"}]  ← 缺少intent_code前缀\n'
+                "```\n\n"
+                "### 任务规划规则\n"
+                "- 每个用户业务意图对应一个 todo 项，不拆内部执行步骤\n"
                 "- 单个意图时也需要创建一个 todo 项，标记为 in_progress\n"
                 "- 任务必须串行执行：一次只将一个 todo 标记为 in_progress\n"
                 "- 当前任务缺少必填参数时，必须向用户追问，不能跳过\n"
@@ -464,10 +472,10 @@ def build_harness_middleware(
                 f"{ref_sections}"
             )
 
-        _INTENT_PREFIX_RE = re.compile(r"^\[([A-Z][A-Z0-9_]+)\]\s*")
+        _INTENT_PREFIX_RE = re.compile(r"^([A-Z][A-Z0-9_]+)\s+")
 
         def _detect_skill_from_todos(self, todos: list[dict[str, Any]]) -> str | None:
-            """Parse [intent_code] prefix from the in_progress todo's content."""
+            """Parse intent_code prefix from the in_progress todo's content."""
             for todo in todos:
                 if todo.get("status") != "in_progress":
                     continue

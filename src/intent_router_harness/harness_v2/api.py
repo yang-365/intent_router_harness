@@ -339,7 +339,7 @@ def _invoke_agent(agent: Any, user_input: str, thread_id: str) -> dict[str, Any]
     return result
 
 
-_INTENT_PREFIX_RE = re.compile(r"^\[([A-Z][A-Z0-9_]+)\]\s*")
+_INTENT_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]+\s+")
 
 
 def _todos_to_task_list(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -348,7 +348,7 @@ def _todos_to_task_list(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any
     current_task: dict[str, Any] | None = None
     for i, todo in enumerate(todos):
         raw_content = todo.get("content", "")
-        # Strip [INTENT_CODE] prefix for frontend display
+        # Strip intent_code prefix for frontend display
         title = _INTENT_PREFIX_RE.sub("", raw_content)
         task = {
             "taskId": f"todo_{i}",
