@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_once
@@ -91,7 +92,10 @@ def build_harness_middleware(
             constraint_block = (
                 "\n\n## Task Execution Constraints\n"
                 "- 使用 write_todos 工具规划任务：每个用户业务意图对应一个 todo 项\n"
-                "- todo 只记录业务意图级别的任务（如'给张三转账3000元'、'缴电费200元'），"
+                "- todo 的 content 必须以 `[intent_code]` 开头，后跟任务描述。\n"
+                "  例如：`[AG_TRANS] 给张三转账3000元`、`[AG_PAY_BILL] 缴电费200元`\n"
+                "  intent_code 必须来自 Available Skills 中列出的 intent_codes\n"
+                "- todo 只记录业务意图级别的任务，"
                 "不要将意图识别、提槽、workflow 调用等内部执行步骤拆成 todo\n"
                 "- 单个意图时也需要创建一个 todo 项，标记为 in_progress\n"
                 "- 任务必须串行执行：一次只将一个 todo 标记为 in_progress\n"
@@ -295,13 +299,14 @@ def build_harness_middleware(
 
         Loading and unloading are driven by ``AgentState.todos``:
 
-          1. No in_progress todo: inject only lightweight metadata summary
-             so the LLM can identify user intents and plan todos.
-          2. in_progress todo detected: detect the intent from LLM output,
-             load the matching skill's body + references.
-          3. Skill loaded: re-inject on every model call to keep context.
-          4. Unload: called explicitly by ``/completion`` endpoint via
-             ``unload_skill()`` when a task is marked done.
+          1. ``before_model``: check todos for in_progress item.  If found
+             and no skill loaded, detect intent from ``[INTENT_CODE]``
+             prefix in todo content (or fallback to message scan) and set
+             ``_loaded_skill``.
+          2. ``wrap_model_call``: if ``_loaded_skill`` is set, inject
+             skill body + references; otherwise inject metadata only.
+          3. ``unload_skill()``: called by ``/completion`` endpoint
+             when a task is marked done — clears ``_loaded_skill``.
         """
 
         def __init__(self, registry: Any | None = None) -> None:
@@ -317,13 +322,28 @@ def build_harness_middleware(
             del runtime
             todos = state.get("todos") or []
             self._has_active_todo = any(t.get("status") == "in_progress" for t in todos)
+            self._try_load_skill(todos, state.get("messages") or [])
             return None
 
         async def abefore_model(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
             del runtime
             todos = state.get("todos") or []
             self._has_active_todo = any(t.get("status") == "in_progress" for t in todos)
+            self._try_load_skill(todos, state.get("messages") or [])
             return None
+
+        def _try_load_skill(self, todos: list[dict[str, Any]], messages: list[Any]) -> None:
+            """Detect and load skill when an in_progress todo exists."""
+            if not self._has_active_todo or self._loaded_skill or not self._registry:
+                return
+            # Priority 1: parse [intent_code] prefix from in_progress todo content
+            target = self._detect_skill_from_todos(todos)
+            # Priority 2: scan messages for intent_code mentions
+            if not target:
+                target = self._detect_target_skill(messages)
+            if target:
+                logger.info("SkillLifecycle: loading skill=%s (before_model)", target)
+                self._loaded_skill = target
 
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
             return handler(self._prepare_skill_context(request))
@@ -348,25 +368,12 @@ def build_harness_middleware(
             if self._registry is None:
                 return request
 
-            # ---- Phase 1: no active todo — metadata only ----
-            if not self._has_active_todo and not self._loaded_skill:
-                return self._inject_metadata_summary(request)
-
-            # ---- Phase 2: active todo + no skill loaded — detect & load ----
-            if self._has_active_todo and not self._loaded_skill:
-                messages = getattr(request, "messages", None) or []
-                target_skill = self._detect_target_skill(messages)
-                if target_skill:
-                    logger.info("SkillLifecycle: loading skill=%s", target_skill)
-                    self._loaded_skill = target_skill
-                    return self._inject_skill_with_references(request, target_skill)
-                return self._inject_metadata_summary(request)
-
-            # ---- Phase 3: skill loaded — re-inject for context ----
+            # Skill loaded (by before_model) → inject body + references
             if self._loaded_skill:
                 return self._inject_skill_with_references(request, self._loaded_skill)
 
-            return request
+            # No skill loaded → metadata only (for intent recognition + todo planning)
+            return self._inject_metadata_summary(request)
 
         def _inject_metadata_summary(self, request: Any) -> Any:
             """Inject lightweight skill metadata for intent recognition only."""
@@ -457,6 +464,28 @@ def build_harness_middleware(
                 f"{skill_body}"
                 f"{ref_sections}"
             )
+
+        _INTENT_PREFIX_RE = re.compile(r"^\[([A-Z][A-Z0-9_]+)\]\s*")
+
+        def _detect_skill_from_todos(self, todos: list[dict[str, Any]]) -> str | None:
+            """Parse [intent_code] prefix from the in_progress todo's content."""
+            for todo in todos:
+                if todo.get("status") != "in_progress":
+                    continue
+                content = todo.get("content", "")
+                match = self._INTENT_PREFIX_RE.match(content)
+                if match:
+                    intent_code = match.group(1)
+                    meta = self._registry.find_by_intent(intent_code)
+                    if meta:
+                        return meta.name
+                # Fallback: scan todo content for any known intent_code
+                for code in self._registry.intent_codes():
+                    if code in content:
+                        meta = self._registry.find_by_intent(code)
+                        if meta:
+                            return meta.name
+            return None
 
         def _detect_target_skill(self, messages: list[Any]) -> str | None:
             """Scan recent AIMessages for intent_code signals.
