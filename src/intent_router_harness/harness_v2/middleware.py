@@ -741,6 +741,7 @@ def build_harness_middleware(
                 ),
                 tool_call_id=_tool_call_id(request),
                 name="workflow_api_call",
+                status="error",
             )
 
         def _run_before_hooks(self, request: Any) -> None:
