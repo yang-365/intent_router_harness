@@ -383,9 +383,11 @@ def build_harness_middleware(
             )
             instruction = (
                 "\n\n## Skill Loading Protocol\n"
-                "识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，"
-                "了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。"
-                "不要编造 workflow URL，必须使用 reference 文件中的完整地址。"
+                "不要手动调用 read_file 读取 SKILL.md 或 reference 文件 — "
+                "系统会在你识别意图后自动将对应技能的完整内容和参考文件注入到上下文中。\n"
+                "你只需根据上面的技能摘要识别用户意图并输出 intent_code，"
+                "系统会自动加载对应技能的提槽规则和 workflow 地址。\n"
+                "不要编造 workflow URL，必须使用系统注入的 reference 中的完整地址。"
             )
             system_message = SystemMessage(
                 content=f"{existing_text}\n\n{summary}{instruction}" if existing_text else f"{summary}{instruction}"
@@ -454,13 +456,15 @@ def build_harness_middleware(
             )
 
         def _detect_target_skill(self, messages: list[Any]) -> str | None:
-            """Scan recent messages for intent_code or skill name signals.
+            """Scan recent AIMessages for intent_code or skill name signals.
 
-            Business-agnostic: reads structured JSON from agent output
-            and scans plain-text mentions of known intent codes
-            registered in the skill registry.
+            Only scans AIMessage (LLM's own output) — ToolMessage responses
+            from read_file may contain skill content with intent codes that
+            would cause false matches.
             """
             for msg in reversed(messages):
+                if not isinstance(msg, AIMessage):
+                    continue
                 content = getattr(msg, "content", "")
                 if not isinstance(content, str):
                     continue
