@@ -297,16 +297,19 @@ def build_harness_middleware(
     class SkillLifecycleMiddleware(AgentMiddleware):
         """Todo-driven skill loading/unloading.
 
-        Loading and unloading are driven by ``AgentState.todos``:
+        Loading and unloading are driven exclusively by ``AgentState.todos``:
 
           1. ``before_model``: check todos for in_progress item.  If found
-             and no skill loaded, detect intent from ``[INTENT_CODE]``
-             prefix in todo content (or fallback to message scan) and set
-             ``_loaded_skill``.
+             and no skill loaded, parse ``[INTENT_CODE]`` prefix from the
+             todo's content and resolve via ``SkillRegistry.find_by_intent``.
           2. ``wrap_model_call``: if ``_loaded_skill`` is set, inject
              skill body + references; otherwise inject metadata only.
           3. ``unload_skill()``: called by ``/completion`` endpoint
              when a task is marked done — clears ``_loaded_skill``.
+
+        No message scanning is performed.  The only trigger for skill
+        loading is the ``[INTENT_CODE]`` prefix written by the LLM in
+        ``write_todos`` content.
         """
 
         def __init__(self, registry: Any | None = None) -> None:
@@ -322,25 +325,21 @@ def build_harness_middleware(
             del runtime
             todos = state.get("todos") or []
             self._has_active_todo = any(t.get("status") == "in_progress" for t in todos)
-            self._try_load_skill(todos, state.get("messages") or [])
+            self._try_load_skill(todos)
             return None
 
         async def abefore_model(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
             del runtime
             todos = state.get("todos") or []
             self._has_active_todo = any(t.get("status") == "in_progress" for t in todos)
-            self._try_load_skill(todos, state.get("messages") or [])
+            self._try_load_skill(todos)
             return None
 
-        def _try_load_skill(self, todos: list[dict[str, Any]], messages: list[Any]) -> None:
-            """Detect and load skill when an in_progress todo exists."""
+        def _try_load_skill(self, todos: list[dict[str, Any]]) -> None:
+            """Detect and load skill from [INTENT_CODE] prefix in in_progress todo."""
             if not self._has_active_todo or self._loaded_skill or not self._registry:
                 return
-            # Priority 1: parse [intent_code] prefix from in_progress todo content
             target = self._detect_skill_from_todos(todos)
-            # Priority 2: scan messages for intent_code mentions
-            if not target:
-                target = self._detect_target_skill(messages)
             if target:
                 logger.info("SkillLifecycle: loading skill=%s (before_model)", target)
                 self._loaded_skill = target
@@ -485,81 +484,6 @@ def build_harness_middleware(
                         meta = self._registry.find_by_intent(code)
                         if meta:
                             return meta.name
-            return None
-
-        def _detect_target_skill(self, messages: list[Any]) -> str | None:
-            """Scan recent AIMessages for intent_code signals.
-
-            Only scans AIMessage (LLM's own output) — ToolMessage responses
-            from read_file may contain skill content with intent codes that
-            would cause false matches.
-            """
-            for msg in reversed(messages):
-                if not isinstance(msg, AIMessage):
-                    continue
-                content = getattr(msg, "content", "")
-                if not isinstance(content, str):
-                    continue
-
-                # Try structured JSON first
-                stripped = content.strip()
-                if stripped.startswith("{"):
-                    try:
-                        payload = json.loads(stripped)
-                        skill_name = self._extract_skill_from_payload(payload)
-                        if skill_name:
-                            return skill_name
-                    except json.JSONDecodeError:
-                        pass
-
-                # Scan plain-text for known intent codes
-                if self._registry is not None:
-                    for intent_code in self._registry.intent_codes():
-                        if intent_code in content:
-                            meta = self._registry.find_by_intent(intent_code)
-                            if meta:
-                                return meta.name
-
-            return None
-
-        def _extract_skill_from_payload(self, payload: dict[str, Any]) -> str | None:
-            """Extract skill name from protocol JSON — business-agnostic."""
-            # Check frames[].intent_code
-            frames = payload.get("frames", [])
-            if isinstance(frames, list):
-                for frame in frames:
-                    if not isinstance(frame, dict):
-                        continue
-                    intent_code = frame.get("intent_code")
-                    if intent_code:
-                        meta = self._registry.find_by_intent(str(intent_code))
-                        if meta:
-                            return meta.name
-                    # Check current_task.intent_code
-                    current_task = frame.get("current_task")
-                    if isinstance(current_task, dict):
-                        task_intent = current_task.get("intent_code")
-                        if task_intent:
-                            meta = self._registry.find_by_intent(str(task_intent))
-                            if meta:
-                                return meta.name
-
-            # Check top-level intent_code
-            top_intent = payload.get("intent_code")
-            if top_intent:
-                meta = self._registry.find_by_intent(str(top_intent))
-                if meta:
-                    return meta.name
-
-            # Check current_task at top level
-            current_task = payload.get("current_task")
-            if isinstance(current_task, dict):
-                task_intent = current_task.get("intent_code")
-                if task_intent:
-                    meta = self._registry.find_by_intent(str(task_intent))
-                    if meta:
-                        return meta.name
-
             return None
 
     # ------------------------------------------------------------------
