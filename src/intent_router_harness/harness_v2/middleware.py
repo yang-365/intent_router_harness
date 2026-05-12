@@ -90,7 +90,10 @@ def build_harness_middleware(
                 return request
             constraint_block = (
                 "\n\n## Task Execution Constraints\n"
-                "- 使用 write_todos 工具管理任务列表，将每个识别到的任务作为一个 todo 项\n"
+                "- 使用 write_todos 工具规划任务：每个用户业务意图对应一个 todo 项\n"
+                "- todo 只记录业务意图级别的任务（如'给张三转账3000元'、'缴电费200元'），"
+                "不要将意图识别、提槽、workflow 调用等内部执行步骤拆成 todo\n"
+                "- 单个意图时也需要创建一个 todo 项，标记为 in_progress\n"
                 "- 任务必须串行执行：一次只将一个 todo 标记为 in_progress\n"
                 "- 当前任务缺少必填参数时，必须向用户追问，不能跳过\n"
                 "- 不要自行将任务标记为 completed — 任务完成由前端 /completion 接口触发\n"

@@ -53,7 +53,8 @@ completion_state 取值：
 - 只在 workflow_api_call 返回结果后才设置 completion_state=1
 - 不要自行设置 completion_state=2，这由前端 /completion 接口触发
 - message 字段是给用户看的文字，务必用自然语言
-- 任务规划使用 write_todos 工具管理，不要在 JSON 输出中包含 task_list 或 current_task
+- 任务规划使用 write_todos 工具管理，每个用户业务意图对应一个 todo（如"给张三转账3000元"），不要将内部步骤拆成 todo
+- 不要在 JSON 输出中包含 task_list 或 current_task
 """
 
 
