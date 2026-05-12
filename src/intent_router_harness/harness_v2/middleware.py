@@ -286,8 +286,7 @@ def build_harness_middleware(
                 return False
             if getattr(msg, "name", "") != "workflow_api_call":
                 return False
-            content = getattr(msg, "content", "")
-            return "was cancelled" not in content
+            return getattr(msg, "status", "success") == "success"
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
