@@ -16,6 +16,7 @@ from intent_router_harness.harness_v2.config import HarnessConfig, load_config
 from intent_router_harness.harness_v2.errors import HarnessError, SessionBusyError
 from intent_router_harness.harness_v2.protocol import (
     AssistantProtocolFrame,
+    AssistantStatus,
     MessageRequest,
     TaskCompletionRequest,
     TraceEvent,
@@ -192,13 +193,27 @@ def create_app(
 
     @app.post("/api/v1/task/completion")
     def task_completion(request: TaskCompletionRequest):
-        status = "completed" if request.completionSignal == 1 else "failed"
+        ha = app.state.harness
+        todo_status = "completed" if request.completionSignal == 1 else "failed"
+
+        # Update AgentState.todos via checkpointer
+        thread_id = ha.session_mgr.thread_id(request.custID, request.sessionId)
+        updated_todos = _advance_todos(ha.agent, thread_id, todo_status)
+
+        # Build response frame
+        task_list, current_task = _todos_to_task_list(updated_todos) if updated_todos else ([], None)
+        has_remaining = updated_todos is not None and any(
+            t.get("status") in ("pending", "in_progress") for t in updated_todos
+        )
+        frame_status: AssistantStatus = todo_status if not has_remaining else "waiting_assistant_completion"  # type: ignore[assignment]
         frame = AssistantProtocolFrame(
             ok=request.completionSignal == 1,
-            status=status,
-            completion_state=2,
+            status=frame_status,
+            completion_state=1 if has_remaining else 2,
             completion_reason="task_completion_received",
             output={"taskId": request.taskId, "completionSignal": request.completionSignal},
+            task_list=task_list,
+            current_task=current_task,
         )
         payload = frame.protocol_dump()
         if request.stream:
@@ -209,7 +224,14 @@ def create_app(
                         stage="task_completion",
                         title="任务完成回调",
                         summary=f"taskId={request.taskId} signal={request.completionSignal}",
-                        data={"taskId": request.taskId, "completionSignal": request.completionSignal},
+                        data={
+                            "taskId": request.taskId,
+                            "completionSignal": request.completionSignal,
+                            "todos_remaining": len([
+                                t for t in (updated_todos or [])
+                                if t.get("status") == "pending"
+                            ]),
+                        },
                     ).model_dump(mode="json")
                 ]
             return _sse_response([payload], trace_payloads=trace_payloads)
@@ -237,6 +259,57 @@ def _build_user_input(request: MessageRequest) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def _advance_todos(
+    agent: Any,
+    thread_id: str,
+    status: str,
+) -> list[dict[str, Any]] | None:
+    """Mark the current in_progress todo as completed/failed and advance.
+
+    Steps:
+    1. Read current todos from agent state via checkpointer
+    2. Mark the first ``in_progress`` todo with *status*
+    3. Mark the next ``pending`` todo as ``in_progress``
+    4. If all todos are done, clear the list
+    5. Write back via ``agent.update_state()``
+
+    Returns the updated todos list, or ``None`` if no todos exist.
+    """
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        state = agent.get_state(config)
+        todos: list[dict[str, Any]] = list(state.values.get("todos") or [])
+    except Exception:
+        logger.debug("could not read agent state for thread=%s", thread_id, exc_info=True)
+        return None
+
+    if not todos:
+        return None
+
+    # Mark current in_progress todo
+    for todo in todos:
+        if todo.get("status") == "in_progress":
+            todo["status"] = status
+            break
+
+    # Advance next pending todo to in_progress
+    for todo in todos:
+        if todo.get("status") == "pending":
+            todo["status"] = "in_progress"
+            break
+
+    # If all todos are done, clear the list
+    all_done = all(t.get("status") in ("completed", "failed") for t in todos)
+    updated = [] if all_done else todos
+
+    try:
+        agent.update_state(config, {"todos": updated})
+    except Exception:
+        logger.debug("could not update agent state for thread=%s", thread_id, exc_info=True)
+
+    return todos  # Return pre-clear list for response frame
 
 
 def _invoke_agent(agent: Any, user_input: str, thread_id: str) -> dict[str, Any]:
