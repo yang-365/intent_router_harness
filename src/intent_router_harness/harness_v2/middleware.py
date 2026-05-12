@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from intent_router_harness.harness_v2.protocol import emit_trace, emit_trace_once
@@ -91,12 +90,21 @@ def build_harness_middleware(
                 return request
             constraint_block = (
                 "\n\n## Task Execution Constraints\n"
-                "- 使用 write_todos 工具规划任务：每个用户业务意图对应一个 todo 项\n"
-                "- todo 的 content 必须以 `[intent_code]` 开头，后跟任务描述。\n"
-                "  例如：`[AG_TRANS] 给张三转账3000元`、`[AG_PAY_BILL] 缴电费200元`\n"
-                "  intent_code 必须来自 Available Skills 中列出的 intent_codes\n"
-                "- todo 只记录业务意图级别的任务，"
-                "不要将意图识别、提槽、workflow 调用等内部执行步骤拆成 todo\n"
+                "### write_todos 格式要求（必须严格遵守）\n"
+                "每个 todo 的 content **必须**以 skill name 开头，空格后跟任务描述。\n"
+                "skill name 必须从 Available Skills 列出的 name 中选择。\n\n"
+                "**正确格式：**\n"
+                "```\n"
+                '[{"content": "<skill-name> 任务描述", "status": "in_progress"},\n'
+                ' {"content": "<skill-name> 任务描述", "status": "pending"}]\n'
+                "```\n"
+                "其中 `<skill-name>` 替换为 Available Skills 中对应技能的 name 字段值。\n\n"
+                "**错误格式（不要这样写）：**\n"
+                "```\n"
+                '[{"content": "任务描述", "status": "in_progress"}]  ← 缺少skill name前缀\n'
+                "```\n\n"
+                "### 任务规划规则\n"
+                "- 每个用户业务意图对应一个 todo 项，不拆内部执行步骤\n"
                 "- 单个意图时也需要创建一个 todo 项，标记为 in_progress\n"
                 "- 任务必须串行执行：一次只将一个 todo 标记为 in_progress\n"
                 "- 当前任务缺少必填参数时，必须向用户追问，不能跳过\n"
@@ -300,16 +308,16 @@ def build_harness_middleware(
         Loading and unloading are driven exclusively by ``AgentState.todos``:
 
           1. ``before_model``: check todos for in_progress item.  If found
-             and no skill loaded, parse ``[INTENT_CODE]`` prefix from the
-             todo's content and resolve via ``SkillRegistry.find_by_intent``.
+             and no skill loaded, parse skill name prefix from the todo's
+             content and resolve via ``SkillRegistry``.
           2. ``wrap_model_call``: if ``_loaded_skill`` is set, inject
              skill body + references; otherwise inject metadata only.
           3. ``unload_skill()``: called by ``/completion`` endpoint
              when a task is marked done — clears ``_loaded_skill``.
 
         No message scanning is performed.  The only trigger for skill
-        loading is the ``[INTENT_CODE]`` prefix written by the LLM in
-        ``write_todos`` content.
+        loading is the skill name prefix written by the LLM in
+        ``write_todos`` content (e.g. ``transfer-routing 给张三转账``).
         """
 
         def __init__(self, registry: Any | None = None) -> None:
@@ -336,13 +344,29 @@ def build_harness_middleware(
             return None
 
         def _try_load_skill(self, todos: list[dict[str, Any]]) -> None:
-            """Detect and load skill from [INTENT_CODE] prefix in in_progress todo."""
+            """Detect and load skill from skill_name prefix in in_progress todo."""
             if not self._has_active_todo or self._loaded_skill or not self._registry:
                 return
             target = self._detect_skill_from_todos(todos)
             if target:
                 logger.info("SkillLifecycle: loading skill=%s (before_model)", target)
                 self._loaded_skill = target
+                meta = self._registry.get_meta(target)
+                emit_trace(
+                    "skill_loaded",
+                    "技能加载",
+                    f"加载技能: {target}",
+                    skill_name=target,
+                )
+                if meta and meta.references:
+                    loaded_refs = [f"{r.id}({r.purpose})" for r in meta.references]
+                    emit_trace(
+                        "skill_reference_loaded",
+                        "技能参考文件加载",
+                        f"加载 {len(loaded_refs)} 个参考文件: {', '.join(loaded_refs)}",
+                        skill_name=target,
+                        references=loaded_refs,
+                    )
 
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
             return handler(self._prepare_skill_context(request))
@@ -393,8 +417,8 @@ def build_harness_middleware(
             instruction = (
                 "\n\n## Skill Loading Protocol\n"
                 "不要手动调用 read_file 读取 SKILL.md 或 reference 文件 — "
-                "系统会在你识别意图后自动将对应技能的完整内容和参考文件注入到上下文中。\n"
-                "你只需根据上面的技能摘要识别用户意图并输出 intent_code，"
+                "系统会在你通过 write_todos 指定技能后自动将对应技能的完整内容和参考文件注入到上下文中。\n"
+                "你只需在 write_todos 的 content 中以 skill name 开头（如上面 Available Skills 中的 name 字段），"
                 "系统会自动加载对应技能的提槽规则和 workflow 地址。\n"
                 "不要编造 workflow URL，必须使用系统注入的 reference 中的完整地址。"
             )
@@ -431,59 +455,34 @@ def build_harness_middleware(
                 return None
             meta = self._registry.get_meta(skill_name)
 
-            emit_trace(
-                "skill_loaded",
-                "技能加载",
-                f"加载技能: {skill_name}",
-                skill_name=skill_name,
-            )
-
             ref_sections = ""
             if meta and meta.references:
                 ref_parts: list[str] = []
-                loaded_refs: list[str] = []
                 for ref in meta.references:
                     ref_body = self._registry.load_reference(skill_name, ref.id)
                     if ref_body:
                         ref_parts.append(
                             f"\n### Reference: {ref.id} — {ref.purpose}\n\n{ref_body}"
                         )
-                        loaded_refs.append(f"{ref.id}({ref.purpose})")
                 if ref_parts:
                     ref_sections = "\n".join(ref_parts)
-                    emit_trace(
-                        "skill_reference_loaded",
-                        "技能参考文件加载",
-                        f"加载 {len(ref_parts)} 个参考文件: {', '.join(loaded_refs)}",
-                        skill_name=skill_name,
-                        references=loaded_refs,
-                    )
             return (
                 f"\n\n## Loaded Skill: {skill_name}\n\n"
                 f"{skill_body}"
                 f"{ref_sections}"
             )
 
-        _INTENT_PREFIX_RE = re.compile(r"^\[([A-Z][A-Z0-9_]+)\]\s*")
-
         def _detect_skill_from_todos(self, todos: list[dict[str, Any]]) -> str | None:
-            """Parse [intent_code] prefix from the in_progress todo's content."""
+            """Parse skill_name prefix from the in_progress todo's content."""
             for todo in todos:
                 if todo.get("status") != "in_progress":
                     continue
                 content = todo.get("content", "")
-                match = self._INTENT_PREFIX_RE.match(content)
-                if match:
-                    intent_code = match.group(1)
-                    meta = self._registry.find_by_intent(intent_code)
-                    if meta:
-                        return meta.name
-                # Fallback: scan todo content for any known intent_code
-                for code in self._registry.intent_codes():
-                    if code in content:
-                        meta = self._registry.find_by_intent(code)
-                        if meta:
-                            return meta.name
+                # Extract first token (skill_name) before space
+                first_space = content.find(" ")
+                prefix = content[:first_space] if first_space > 0 else content
+                if prefix in self._registry.names():
+                    return prefix
             return None
 
     # ------------------------------------------------------------------

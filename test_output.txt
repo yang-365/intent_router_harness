@@ -1,0 +1,96 @@
+event: trace
+data: {"stage": "request_received", "title": "请求进入Router", "summary": "session=test_prefix_001，executionMode=execute", "data": {"session_id": "test_prefix_001", "cust_id": "C0001", "execution_mode": "execute", "txt": "给张三转账635元，然后缴费"}}
+
+event: trace
+data: {"stage": "deepagent_runtime_start", "title": "DeepAgent运行开始", "summary": "thread_id=C0001:test_prefix_001", "data": {"thread_id": "C0001:test_prefix_001"}}
+
+event: trace
+data: {"stage": "task_constraints_injected", "title": "任务执行约束注入", "summary": "串行执行、缺槽追问、前端确认完成", "data": {}}
+
+event: trace
+data: {"stage": "skill_metadata_injected", "title": "技能元数据注入", "summary": "注入 2 个技能摘要用于意图识别", "data": {"skill_count": 2, "skill_names": ["bill-payment-routing", "transfer-routing"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "skill_loaded", "title": "技能加载", "summary": "加载技能: transfer-routing", "data": {"skill_name": "transfer-routing"}}
+
+event: trace
+data: {"stage": "skill_reference_loaded", "title": "技能参考文件加载", "summary": "加载 2 个参考文件: slot_filling(转账提槽规则), workflow_request(转账子工作流接口与参数组装说明)", "data": {"skill_name": "transfer-routing", "references": ["slot_filling(转账提槽规则)", "workflow_request(转账子工作流接口与参数组装说明)"]}}
+
+event: trace
+data: {"stage": "slots_extracted", "title": "参数提取", "summary": "提取参数: payee_name=张三, amount=635", "data": {"slot_memory": {"payee_name": "张三", "amount": 635}}}
+
+event: trace
+data: {"stage": "protocol_frame_output", "title": "协议帧输出", "summary": "status=ready_for_dispatch, completion_state=0", "data": {"status": "ready_for_dispatch", "completion_state": 0, "message": "已识别您的转账意图。将为您执行给张三转账635元的操作。"}}
+
+event: trace
+data: {"stage": "task_planned", "title": "任务规划 (write_todos)", "summary": "共 2 个任务", "data": {"task_list": [{"taskId": "todo_0", "title": "给张三转账635元", "status": "completed"}, {"taskId": "todo_1", "title": "缴费", "status": "completed"}], "current_task": null}}
+
+event: trace
+data: {"stage": "assistant_protocol_frames", "title": "SSE业务帧生成", "summary": "生成 1 个 message frame", "data": {"frame_count": 1, "frames": [{"ok": true, "status": "ready_for_dispatch", "completion_state": 0, "completion_reason": "任务已完成，等待前端确认", "output": {"workflow_request": {"method": "POST", "url": "http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool", "body": {"session_id": "test_prefix_001", "txt": "给张三转账635元，然后缴费", "stream": true, "config_variables": [{"name": "custID", "value": "C0001"}, {"name": "sessionID", "value": "test_prefix_001"}, {"name": "currentDisplay", "value": ""}, {"name": "agentSessionID", "value": "test_prefix_001"}, {"name": "slots_data", "value": "{\"payee_name\": \"张三\", \"amount\": 635}"}]}}}, "slot_memory": {"payee_name": "张三", "amount": 635}, "message": "已识别您的转账意图。将为您执行给张三转账635元的操作。", "task_list": [{"taskId": "todo_0", "title": "给张三转账635元", "status": "completed"}, {"taskId": "todo_1", "title": "缴费", "status": "completed"}], "actions": []}]}}
+
+event: message
+data: {"ok": true, "status": "ready_for_dispatch", "completion_state": 0, "completion_reason": "任务已完成，等待前端确认", "output": {"workflow_request": {"method": "POST", "url": "http://127.0.0.1:9877/agent-api/workflow-agent-1-1b14f16b/chatabc/use_as_tool", "body": {"session_id": "test_prefix_001", "txt": "给张三转账635元，然后缴费", "stream": true, "config_variables": [{"name": "custID", "value": "C0001"}, {"name": "sessionID", "value": "test_prefix_001"}, {"name": "currentDisplay", "value": ""}, {"name": "agentSessionID", "value": "test_prefix_001"}, {"name": "slots_data", "value": "{\"payee_name\": \"张三\", \"amount\": 635}"}]}}}, "slot_memory": {"payee_name": "张三", "amount": 635}, "message": "已识别您的转账意图。将为您执行给张三转账635元的操作。", "task_list": [{"taskId": "todo_0", "title": "给张三转账635元", "status": "completed"}, {"taskId": "todo_1", "title": "缴费", "status": "completed"}], "actions": []}
+
+event: done
+data: [DONE]
+
