@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -196,19 +195,16 @@ class TestSkillLifecycleMiddleware:
         mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # Simulate active todo via before_model
+        # Simulate active todo with [INTENT_CODE] prefix — before_model detects and loads
         lifecycle.before_model(
-            {"todos": [{"content": "给张三转账", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "[AG_TRANS] 给张三转账", "status": "in_progress"}], "messages": []},
             None,
         )
-
-        ai_msg = FakeAIMessage(content=json.dumps({
-            "frames": [{"intent_code": "AG_TRANS", "status": "running"}]
-        }))
+        assert lifecycle._loaded_skill == "transfer-routing"
 
         request = MagicMock()
         request.system_message = FakeSystemMessage(content="")
-        request.messages = [ai_msg]
+        request.messages = []
         request.override.return_value = request
 
         lifecycle.wrap_model_call(request, lambda r: "ok")
@@ -239,17 +235,15 @@ class TestSkillLifecycleMiddleware:
         mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # First: load transfer skill (simulate active todo)
+        # First: load transfer skill via [INTENT_CODE] prefix in todo
         lifecycle.before_model(
-            {"todos": [{"content": "给张三转账", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "[AG_TRANS] 给张三转账", "status": "in_progress"}], "messages": []},
             None,
         )
-        ai_msg1 = FakeAIMessage(content=json.dumps({
-            "frames": [{"intent_code": "AG_TRANS", "status": "running"}]
-        }))
+        assert lifecycle._loaded_skill == "transfer-routing"
         request1 = MagicMock()
         request1.system_message = FakeSystemMessage(content="")
-        request1.messages = [ai_msg1]
+        request1.messages = []
         request1.override.return_value = request1
         lifecycle.wrap_model_call(request1, lambda r: "ok")
         assert lifecycle._loaded_skill == "transfer-routing"
@@ -258,15 +252,13 @@ class TestSkillLifecycleMiddleware:
         lifecycle.unload_skill()
         assert lifecycle._loaded_skill is None
         lifecycle.before_model(
-            {"todos": [{"content": "缴费", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "[AG_PAY_BILL] 缴费", "status": "in_progress"}], "messages": []},
             None,
         )
-        ai_msg2 = FakeAIMessage(content=json.dumps({
-            "frames": [{"intent_code": "AG_PAY_BILL", "status": "running"}]
-        }))
+        assert lifecycle._loaded_skill == "bill-payment"
         request2 = MagicMock()
         request2.system_message = FakeSystemMessage(content="")
-        request2.messages = [ai_msg2]
+        request2.messages = []
         request2.override.return_value = request2
         lifecycle.wrap_model_call(request2, lambda r: "ok")
         assert lifecycle._loaded_skill == "bill-payment"
