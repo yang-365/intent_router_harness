@@ -293,30 +293,39 @@ def build_harness_middleware(
     # ------------------------------------------------------------------
 
     class SkillLifecycleMiddleware(AgentMiddleware):
-        """Progressive skill loading/unloading per session context.
+        """Todo-driven skill loading/unloading.
 
-        Enforces the correct execution order:
+        Loading and unloading are driven by ``AgentState.todos``:
 
-          1. First model call (no intent yet): inject lightweight metadata
-             summary (name + description + intent_codes) so LLM can identify
-             intent.  Full bodies and references are NOT loaded yet.
-          2. After intent detected: inject the matched skill's SKILL.md body
-             AND all reference files (slot_filling.md, workflow_request.md)
-             into the system prompt BEFORE the model runs, so that slot
-             extraction is guided by the business rules in references.
-          3. Task switch: unload previous skill context, load new skill.
-
-        This ensures: metadata → intent identification → skill body +
-        reference load → slot extraction → workflow call.
+          1. No in_progress todo: inject only lightweight metadata summary
+             so the LLM can identify user intents and plan todos.
+          2. in_progress todo detected: detect the intent from LLM output,
+             load the matching skill's body + references.
+          3. Skill loaded: re-inject on every model call to keep context.
+          4. Unload: called explicitly by ``/completion`` endpoint via
+             ``unload_skill()`` when a task is marked done.
         """
 
         def __init__(self, registry: Any | None = None) -> None:
             self._registry = registry
             self._loaded_skill: str | None = None
+            self._has_active_todo = False
 
         @property
         def name(self) -> str:
             return "SkillLifecycleMiddleware"
+
+        def before_model(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
+            del runtime
+            todos = state.get("todos") or []
+            self._has_active_todo = any(t.get("status") == "in_progress" for t in todos)
+            return None
+
+        async def abefore_model(self, state: dict[str, Any], runtime: Any) -> dict[str, Any] | None:
+            del runtime
+            todos = state.get("todos") or []
+            self._has_active_todo = any(t.get("status") == "in_progress" for t in todos)
+            return None
 
         def wrap_model_call(self, request: Any, handler: Any) -> Any:
             return handler(self._prepare_skill_context(request))
@@ -324,42 +333,38 @@ def build_harness_middleware(
         async def awrap_model_call(self, request: Any, handler: Any) -> Any:
             return await handler(self._prepare_skill_context(request))
 
+        def unload_skill(self) -> None:
+            """Explicitly unload current skill — called by /completion."""
+            if self._loaded_skill:
+                logger.info("SkillLifecycle: unloading skill=%s", self._loaded_skill)
+                emit_trace(
+                    "skill_unloaded",
+                    "技能卸载",
+                    f"卸载技能: {self._loaded_skill}",
+                    skill_name=self._loaded_skill,
+                )
+                self._loaded_skill = None
+
         def _prepare_skill_context(self, request: Any) -> Any:
-            """Progressive skill injection — metadata first, body+refs after intent."""
+            """Inject skill context based on todo state."""
             if self._registry is None:
                 return request
 
-            messages = getattr(request, "messages", None) or []
-            target_skill = self._detect_target_skill(messages)
-
-            # ---- Phase 1: no intent detected yet ----
-            # Inject only a lightweight metadata summary so the LLM can
-            # identify the correct intent.  Full bodies and references
-            # are deliberately NOT loaded to keep context lean and to
-            # enforce the correct ordering (reference AFTER intent).
-            if not target_skill and not self._loaded_skill:
+            # ---- Phase 1: no active todo — metadata only ----
+            if not self._has_active_todo and not self._loaded_skill:
                 return self._inject_metadata_summary(request)
 
-            # ---- Phase 2: intent detected → load skill body + refs ----
-            if target_skill and target_skill != self._loaded_skill:
-                if self._loaded_skill:
-                    logger.info(
-                        "SkillLifecycle: unloading skill=%s, loading skill=%s",
-                        self._loaded_skill,
-                        target_skill,
-                    )
-                    emit_trace(
-                        "skill_unloaded",
-                        "技能卸载",
-                        f"卸载技能: {self._loaded_skill}",
-                        skill_name=self._loaded_skill,
-                    )
-                else:
+            # ---- Phase 2: active todo + no skill loaded — detect & load ----
+            if self._has_active_todo and not self._loaded_skill:
+                messages = getattr(request, "messages", None) or []
+                target_skill = self._detect_target_skill(messages)
+                if target_skill:
                     logger.info("SkillLifecycle: loading skill=%s", target_skill)
-                self._loaded_skill = target_skill
-                return self._inject_skill_with_references(request, target_skill)
+                    self._loaded_skill = target_skill
+                    return self._inject_skill_with_references(request, target_skill)
+                return self._inject_metadata_summary(request)
 
-            # ---- Phase 3: skill already loaded, re-inject for context ----
+            # ---- Phase 3: skill loaded — re-inject for context ----
             if self._loaded_skill:
                 return self._inject_skill_with_references(request, self._loaded_skill)
 
@@ -383,9 +388,11 @@ def build_harness_middleware(
             )
             instruction = (
                 "\n\n## Skill Loading Protocol\n"
-                "识别到用户意图后，必须先通过 read_file 读取对应技能的 reference 文件，"
-                "了解提槽规则和 API 调用方式，然后再调用 workflow_api_call。"
-                "不要编造 workflow URL，必须使用 reference 文件中的完整地址。"
+                "不要手动调用 read_file 读取 SKILL.md 或 reference 文件 — "
+                "系统会在你识别意图后自动将对应技能的完整内容和参考文件注入到上下文中。\n"
+                "你只需根据上面的技能摘要识别用户意图并输出 intent_code，"
+                "系统会自动加载对应技能的提槽规则和 workflow 地址。\n"
+                "不要编造 workflow URL，必须使用系统注入的 reference 中的完整地址。"
             )
             system_message = SystemMessage(
                 content=f"{existing_text}\n\n{summary}{instruction}" if existing_text else f"{summary}{instruction}"
@@ -454,13 +461,15 @@ def build_harness_middleware(
             )
 
         def _detect_target_skill(self, messages: list[Any]) -> str | None:
-            """Scan recent messages for intent_code or skill name signals.
+            """Scan recent AIMessages for intent_code signals.
 
-            Business-agnostic: reads structured JSON from agent output
-            and scans plain-text mentions of known intent codes
-            registered in the skill registry.
+            Only scans AIMessage (LLM's own output) — ToolMessage responses
+            from read_file may contain skill content with intent codes that
+            would cause false matches.
             """
             for msg in reversed(messages):
+                if not isinstance(msg, AIMessage):
+                    continue
                 content = getattr(msg, "content", "")
                 if not isinstance(content, str):
                     continue
@@ -827,11 +836,12 @@ def build_harness_middleware(
     # Assembly
     # ------------------------------------------------------------------
 
+    skill_lifecycle = SkillLifecycleMiddleware(registry=skill_registry)
     middleware: list[Any] = [
         TaskProgressMiddleware(),
         FrontendContextMiddleware(),
         CompletionGateMiddleware(),
-        SkillLifecycleMiddleware(registry=skill_registry),
+        skill_lifecycle,
         SkillFileMiddleware(registry=skill_registry),
         WorkflowGatewayMiddleware(
             urls=allowed_urls,
@@ -839,7 +849,7 @@ def build_harness_middleware(
         ),
         ProtocolOutputMiddleware(),
     ]
-    return middleware
+    return middleware, skill_lifecycle
 
 
 # ---------------------------------------------------------------------------

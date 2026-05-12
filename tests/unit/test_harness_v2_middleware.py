@@ -81,12 +81,12 @@ def skill_tree(tmp_path: Path) -> Path:
 class TestBuildHarnessMiddleware:
     def test_returns_seven_middleware(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(allowed_urls=["http://ok.com"])
+        mw_list, _sl = build_harness_middleware(allowed_urls=["http://ok.com"])
         assert len(mw_list) == 7
 
     def test_middleware_names(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware()
+        mw_list, _sl = build_harness_middleware()
         names = [mw.name for mw in mw_list]
         assert "TaskProgressMiddleware" in names
         assert "FrontendContextMiddleware" in names
@@ -100,7 +100,7 @@ class TestBuildHarnessMiddleware:
 class TestWorkflowGatewayUrlValidation:
     def test_allowed_url_passes(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(allowed_urls=["http://ok.com"])
+        mw_list, _sl = build_harness_middleware(allowed_urls=["http://ok.com"])
         gateway = [m for m in mw_list if m.name == "WorkflowGatewayMiddleware"][0]
 
         request = MagicMock()
@@ -113,7 +113,7 @@ class TestWorkflowGatewayUrlValidation:
 
     def test_blocked_url_returns_tool_message(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(allowed_urls=["http://ok.com"])
+        mw_list, _sl = build_harness_middleware(allowed_urls=["http://ok.com"])
         gateway = [m for m in mw_list if m.name == "WorkflowGatewayMiddleware"][0]
 
         request = MagicMock()
@@ -127,7 +127,7 @@ class TestWorkflowGatewayUrlValidation:
 
     def test_non_workflow_tool_passes_through(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(allowed_urls=["http://ok.com"])
+        mw_list, _sl = build_harness_middleware(allowed_urls=["http://ok.com"])
         gateway = [m for m in mw_list if m.name == "WorkflowGatewayMiddleware"][0]
 
         request = MagicMock()
@@ -141,7 +141,7 @@ class TestWorkflowGatewayUrlValidation:
 class TestCompletionGate:
     def test_gate_triggers_on_workflow_result(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware()
+        mw_list, _sl = build_harness_middleware()
         gate = [m for m in mw_list if m.name == "CompletionGateMiddleware"][0]
 
         state = {
@@ -155,7 +155,7 @@ class TestCompletionGate:
 
     def test_gate_no_op_without_workflow(self):
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware()
+        mw_list, _sl = build_harness_middleware()
         gate = [m for m in mw_list if m.name == "CompletionGateMiddleware"][0]
 
         state = {"messages": [FakeAIMessage(content="hello")]}
@@ -168,7 +168,7 @@ class TestSkillLifecycleMiddleware:
         """On first model call (no intent yet), inject only metadata summary — NOT full bodies."""
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
         request = MagicMock()
@@ -193,8 +193,14 @@ class TestSkillLifecycleMiddleware:
         """After intent detected, load skill body + references BEFORE model runs."""
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
+
+        # Simulate active todo via before_model
+        lifecycle.before_model(
+            {"todos": [{"content": "给张三转账", "status": "in_progress"}], "messages": []},
+            None,
+        )
 
         ai_msg = FakeAIMessage(content=json.dumps({
             "frames": [{"intent_code": "AG_TRANS", "status": "running"}]
@@ -230,10 +236,14 @@ class TestSkillLifecycleMiddleware:
         )
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # First: load transfer skill
+        # First: load transfer skill (simulate active todo)
+        lifecycle.before_model(
+            {"todos": [{"content": "给张三转账", "status": "in_progress"}], "messages": []},
+            None,
+        )
         ai_msg1 = FakeAIMessage(content=json.dumps({
             "frames": [{"intent_code": "AG_TRANS", "status": "running"}]
         }))
@@ -244,7 +254,13 @@ class TestSkillLifecycleMiddleware:
         lifecycle.wrap_model_call(request1, lambda r: "ok")
         assert lifecycle._loaded_skill == "transfer-routing"
 
-        # Second: switch to payment skill
+        # Unload via completion, then switch to payment skill
+        lifecycle.unload_skill()
+        assert lifecycle._loaded_skill is None
+        lifecycle.before_model(
+            {"todos": [{"content": "缴费", "status": "in_progress"}], "messages": []},
+            None,
+        )
         ai_msg2 = FakeAIMessage(content=json.dumps({
             "frames": [{"intent_code": "AG_PAY_BILL", "status": "running"}]
         }))
@@ -265,7 +281,7 @@ class TestSkillFileMiddleware:
     def test_intercepts_skill_read(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         skill_file_mw = [m for m in mw_list if m.name == "SkillFileMiddleware"][0]
 
         request = MagicMock()
@@ -284,7 +300,7 @@ class TestSkillFileMiddleware:
     def test_intercepts_skill_md_read(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         skill_file_mw = [m for m in mw_list if m.name == "SkillFileMiddleware"][0]
 
         request = MagicMock()
@@ -302,7 +318,7 @@ class TestSkillFileMiddleware:
     def test_not_found_lists_available(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         skill_file_mw = [m for m in mw_list if m.name == "SkillFileMiddleware"][0]
 
         request = MagicMock()
@@ -321,7 +337,7 @@ class TestSkillFileMiddleware:
     def test_non_skill_path_passes_through(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         skill_file_mw = [m for m in mw_list if m.name == "SkillFileMiddleware"][0]
 
         request = MagicMock()
@@ -339,7 +355,7 @@ class TestSkillFileMiddleware:
     def test_non_read_tool_passes_through(self, skill_tree):
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
-        mw_list = build_harness_middleware(skill_registry=registry)
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
         skill_file_mw = [m for m in mw_list if m.name == "SkillFileMiddleware"][0]
 
         request = MagicMock()

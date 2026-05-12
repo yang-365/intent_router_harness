@@ -158,7 +158,7 @@ def build_agent(
     if skill_registry is None:
         skill_registry = SkillRegistry.from_roots(config.skill_roots)
 
-    harness_mw = build_harness_middleware(
+    harness_mw, skill_lifecycle = build_harness_middleware(
         allowed_urls=config.workflow_allowed_urls,
         workflow_hooks=workflow_hooks,
         skill_registry=skill_registry,
@@ -193,4 +193,4 @@ def build_agent(
         config.memory_sources,
         len(harness_mw),
     )
-    return agent
+    return agent, skill_lifecycle
