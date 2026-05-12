@@ -27,11 +27,10 @@ class FakeAIMessage:
         self.content = content
 
 class FakeToolMessage:
-    def __init__(self, content="", name="", tool_call_id="", status="success"):
+    def __init__(self, content="", name="", tool_call_id=""):
         self.content = content
         self.name = name
         self.tool_call_id = tool_call_id
-        self.status = status
 
 def fake_hook_config(**kwargs):
     def decorator(func):

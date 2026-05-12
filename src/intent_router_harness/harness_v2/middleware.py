@@ -284,9 +284,7 @@ def build_harness_middleware(
         def _is_workflow_result(msg: Any, tool_message_cls: type) -> bool:
             if not isinstance(msg, tool_message_cls):
                 return False
-            if getattr(msg, "name", "") != "workflow_api_call":
-                return False
-            return getattr(msg, "status", "success") == "success"
+            return getattr(msg, "name", "") == "workflow_api_call"
 
     # ------------------------------------------------------------------
     # 4. SkillLifecycleMiddleware — progressive load/unload
@@ -741,7 +739,6 @@ def build_harness_middleware(
                 ),
                 tool_call_id=_tool_call_id(request),
                 name="workflow_api_call",
-                status="error",
             )
 
         def _run_before_hooks(self, request: Any) -> None:
