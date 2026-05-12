@@ -188,35 +188,60 @@ class TestSkillLifecycleMiddleware:
         assert "## Loaded Skill:" not in sm.content
         handler.assert_called_once()
 
-    def test_detects_intent_loads_body_and_references(self, skill_tree):
-        """After intent detected, load skill body + references BEFORE model runs."""
+    def test_active_todo_without_intent_injects_reminder(self, skill_tree):
+        """Active todo but no intent_code in messages → inject intent reminder."""
         registry = SkillRegistry.from_roots([skill_tree])
         from intent_router_harness.harness_v2.middleware import build_harness_middleware
         mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # Simulate active todo with [INTENT_CODE] prefix — before_model detects and loads
+        # before_model: active todo but no AIMessage with intent → no skill loaded
         lifecycle.before_model(
-            {"todos": [{"content": "[AG_TRANS] 给张三转账", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "给张三转账", "status": "in_progress"}], "messages": []},
+            None,
+        )
+        assert lifecycle._loaded_skill is None
+
+        request = MagicMock()
+        request.system_message = FakeSystemMessage(content="")
+        request.override.return_value = request
+        lifecycle.wrap_model_call(request, lambda r: "ok")
+
+        # Should inject intent reminder, not skill body
+        call_args = request.override.call_args
+        sm = call_args[1].get("system_message") or (call_args[0][0] if call_args[0] else None)
+        assert sm is not None
+        assert "Skill Intent Reminder" in sm.content
+        assert "给张三转账" in sm.content
+        assert "## Loaded Skill:" not in sm.content
+
+    def test_detects_intent_loads_body_and_references(self, skill_tree):
+        """After LLM outputs intent_code, before_model loads skill body + refs."""
+        registry = SkillRegistry.from_roots([skill_tree])
+        from intent_router_harness.harness_v2.middleware import build_harness_middleware
+        mw_list, _sl = build_harness_middleware(skill_registry=registry)
+        lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
+
+        # Simulate: LLM already output AG_TRANS in its AIMessage
+        ai_msg = FakeAIMessage(content="根据当前任务，匹配到意图 AG_TRANS")
+        lifecycle.before_model(
+            {
+                "todos": [{"content": "给张三转账", "status": "in_progress"}],
+                "messages": [ai_msg],
+            },
             None,
         )
         assert lifecycle._loaded_skill == "transfer-routing"
 
         request = MagicMock()
         request.system_message = FakeSystemMessage(content="")
-        request.messages = []
         request.override.return_value = request
-
         lifecycle.wrap_model_call(request, lambda r: "ok")
 
-        # Skill body AND references should have been injected
         call_args = request.override.call_args
-        assert call_args is not None
         sm = call_args[1].get("system_message") or (call_args[0][0] if call_args[0] else None)
         assert sm is not None
-        # Should contain full skill body
         assert "## Loaded Skill: transfer-routing" in sm.content
-        # Should contain reference content (slot filling rules)
         assert "payee_name" in sm.content
 
     def test_skill_unload_on_switch(self, skill_tree):
@@ -235,34 +260,28 @@ class TestSkillLifecycleMiddleware:
         mw_list, _sl = build_harness_middleware(skill_registry=registry)
         lifecycle = [m for m in mw_list if m.name == "SkillLifecycleMiddleware"][0]
 
-        # First: load transfer skill via [INTENT_CODE] prefix in todo
+        # First: load transfer skill via LLM intent_code output
+        ai_msg1 = FakeAIMessage(content="意图 AG_TRANS")
         lifecycle.before_model(
-            {"todos": [{"content": "[AG_TRANS] 给张三转账", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "给张三转账", "status": "in_progress"}], "messages": [ai_msg1]},
             None,
         )
-        assert lifecycle._loaded_skill == "transfer-routing"
-        request1 = MagicMock()
-        request1.system_message = FakeSystemMessage(content="")
-        request1.messages = []
-        request1.override.return_value = request1
-        lifecycle.wrap_model_call(request1, lambda r: "ok")
         assert lifecycle._loaded_skill == "transfer-routing"
 
         # Unload via completion, then switch to payment skill
         lifecycle.unload_skill()
         assert lifecycle._loaded_skill is None
+        ai_msg2 = FakeAIMessage(content="意图 AG_PAY_BILL")
         lifecycle.before_model(
-            {"todos": [{"content": "[AG_PAY_BILL] 缴费", "status": "in_progress"}], "messages": []},
+            {"todos": [{"content": "缴费", "status": "in_progress"}], "messages": [ai_msg2]},
             None,
         )
         assert lifecycle._loaded_skill == "bill-payment"
+        # Verify new skill body is injected via wrap_model_call
         request2 = MagicMock()
         request2.system_message = FakeSystemMessage(content="")
-        request2.messages = []
         request2.override.return_value = request2
         lifecycle.wrap_model_call(request2, lambda r: "ok")
-        assert lifecycle._loaded_skill == "bill-payment"
-        # New skill body should be injected
         call_args = request2.override.call_args
         sm = call_args[1].get("system_message") or (call_args[0][0] if call_args[0] else None)
         assert sm is not None

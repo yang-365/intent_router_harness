@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -339,20 +338,14 @@ def _invoke_agent(agent: Any, user_input: str, thread_id: str) -> dict[str, Any]
     return result
 
 
-_INTENT_PREFIX_RE = re.compile(r"^\[([A-Z][A-Z0-9_]+)\]\s*")
-
-
 def _todos_to_task_list(todos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Convert deepagent write_todos format to protocol task_list + current_task."""
     task_list: list[dict[str, Any]] = []
     current_task: dict[str, Any] | None = None
     for i, todo in enumerate(todos):
-        raw_content = todo.get("content", "")
-        # Strip [INTENT_CODE] prefix for frontend display
-        title = _INTENT_PREFIX_RE.sub("", raw_content)
         task = {
             "taskId": f"todo_{i}",
-            "title": title,
+            "title": todo.get("content", ""),
             "status": todo.get("status", "pending"),
         }
         task_list.append(task)
