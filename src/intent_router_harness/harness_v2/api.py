@@ -42,9 +42,11 @@ class HarnessApp:
         config: HarnessConfig,
         agent: Any | None = None,
         session_mgr: SessionManager | None = None,
+        skill_lifecycle: Any | None = None,
     ) -> None:
         self.config = config
         self._agent = agent
+        self._skill_lifecycle = skill_lifecycle
         self.session_mgr = session_mgr or SessionManager(
             idle_timeout=timedelta(seconds=config.session_idle_timeout_seconds),
         )
@@ -54,8 +56,14 @@ class HarnessApp:
         if self._agent is None:
             from intent_router_harness.harness_v2.agent import build_agent
 
-            self._agent = build_agent(self.config)
+            self._agent, self._skill_lifecycle = build_agent(self.config)
         return self._agent
+
+    @property
+    def skill_lifecycle(self) -> Any | None:
+        # Ensure agent is built so _skill_lifecycle is populated
+        _ = self.agent
+        return self._skill_lifecycle
 
 
 def create_app(
@@ -195,6 +203,10 @@ def create_app(
     def task_completion(request: TaskCompletionRequest):
         ha = app.state.harness
         todo_status = "completed" if request.completionSignal == 1 else "failed"
+
+        # Unload current skill context
+        if ha.skill_lifecycle is not None:
+            ha.skill_lifecycle.unload_skill()
 
         # Update AgentState.todos via checkpointer
         thread_id = ha.session_mgr.thread_id(request.custID, request.sessionId)
